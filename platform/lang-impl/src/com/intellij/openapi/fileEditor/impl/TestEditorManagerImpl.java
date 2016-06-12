@@ -80,12 +80,7 @@ final class TestEditorManagerImpl extends FileEditorManagerEx implements Disposa
                                                                         final boolean focusEditor,
                                                                         boolean searchForSplitter) {
     final Ref<Pair<FileEditor[], FileEditorProvider[]>> result = new Ref<Pair<FileEditor[], FileEditorProvider[]>>();
-    CommandProcessor.getInstance().executeCommand(myProject, new Runnable() {
-      @Override
-      public void run() {
-        result.set(openFileImpl3(file, focusEditor));
-      }
-    }, "", null);
+    CommandProcessor.getInstance().executeCommand(myProject, () -> result.set(openFileImpl3(file, focusEditor)), "", null);
     return result.get();
 
   }
@@ -202,12 +197,14 @@ final class TestEditorManagerImpl extends FileEditorManagerEx implements Disposa
 
   @Override
   public void closeAllFiles() {
-    final EditorFactory editorFactory = EditorFactory.getInstance();
+    EditorFactory editorFactory = EditorFactory.getInstance();
+    TextEditorProvider editorProvider = TextEditorProvider.getInstance();
     Iterator<Editor> it = myVirtualFile2Editor.values().iterator();
     while (it.hasNext()) {
       Editor editor = it.next();
       it.remove();
       if (editor != null && !editor.isDisposed()){
+        editorProvider.disposeEditor(editorProvider.getTextEditor(editor));
         editorFactory.releaseEditor(editor);
       }
     }

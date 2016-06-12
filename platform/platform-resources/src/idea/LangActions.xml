@@ -317,6 +317,8 @@
         <action id="IntroduceField" class="com.intellij.refactoring.actions.IntroduceFieldAction"/>
         <action id="IntroduceParameter" class="com.intellij.refactoring.actions.IntroduceParameterAction"/>
         <separator/>
+        <action id="IntroduceParameterObject" class="com.intellij.refactoring.actions.IntroduceParameterObjectAction"/>
+        <separator/>
         <action id="ExtractMethod" class="com.intellij.refactoring.actions.ExtractMethodAction"/>
         <separator/>
         <action id="ExtractClass" class="com.intellij.refactoring.actions.ExtractClassAction"/>
@@ -634,12 +636,16 @@
       <add-to-group group-id="EditorTabPopupMenu" anchor="last"/>
     </group>
 
+    <group id="TreeNodeExclusion">
+      <action id="UsageView.Include" class="com.intellij.ide.actions.exclusion.IncludeTreeNodeAction"/>
+      <action id="UsageView.Exclude" class="com.intellij.ide.actions.exclusion.ExcludeTreeNodeAction" use-shortcut-of="$Delete"/>
+    </group>>
+
     <group id="UsageView.Popup">
       <action id="UsageView.Rerun" class="com.intellij.usages.actions.RerunSearchAction" icon="AllIcons.Actions.Rerun" use-shortcut-of="Rerun"/>
       <separator/>
       <reference ref="EditSource"/>
-      <action id="UsageView.Include" class="com.intellij.usages.actions.IncludeUsageAction"/>
-      <action id="UsageView.Exclude" class="com.intellij.usages.actions.ExcludeUsageAction" use-shortcut-of="$Delete"/>
+      <reference ref="TreeNodeExclusion"/>
       <action id="UsageView.Remove" class="com.intellij.usages.actions.RemoveUsageAction" use-shortcut-of="SafeDelete"/>
       <separator/>
       <action id="UsageView.ShowRecentFindUsages" class="com.intellij.find.impl.ShowRecentFindUsagesAction" icon="AllIcons.Actions.Back"
@@ -882,21 +888,6 @@
       <separator/>
       <add-to-group anchor="first" group-id="TestTreePopupMenu"/>
     </group>
-    <!-- SM Test Runner Actions -->
-    <group id="SMTestRunnerTestsTree">
-      <separator/>
-      <action id="com.intellij.execution.testframework.sm.runner.ui.statistics.ShowStatisticsAction"
-              class="com.intellij.execution.testframework.sm.runner.ui.statistics.ShowStatisticsAction"
-              text="Show Statistics"/>
-      <add-to-group group-id="TestTreePopupMenu" anchor="last"/>
-    </group>
-    <group id="SMTestRunnerStatistics">
-      <separator/>
-      <action id="com.intellij.execution.testframework.sm.runner.ui.statistics.ShowTestProxy"
-              class="com.intellij.execution.testframework.sm.runner.ui.statistics.ShowTestProxy"
-              text="Navigate to Test"/>
-      <add-to-group group-id="TestTreePopupMenu" anchor="last"/>
-    </group>
     <group>
       <action class="com.intellij.execution.testframework.sm.runner.history.actions.ImportTestsGroup"
               text="Import Test Results" icon="AllIcons.ToolbarDecorator.Import" id="ImportTests"/>
@@ -988,5 +979,19 @@
     </group>
 
     <action id="SeverityEditorDialog" class="com.intellij.codeInspection.ex.SeverityEditorDialogAction"/>
+
+    <group id="InspectionToolWindow.TreePopup" compact="true">
+      <reference ref="EditSource"/>
+      <reference ref="FindUsages"/>
+      <reference ref="TreeNodeExclusion"/>
+      <separator/>
+      <action id="QuickFixes" class="com.intellij.codeInspection.ui.actions.QuickFixesViewActionGroup"/>
+      <separator/>
+      <action id="SuppressFixes" class="com.intellij.codeInspection.ui.actions.suppress.SuppressActionWrapper"/>
+      <separator/>
+      <action id="EditInspectionSettings" class="com.intellij.codeInspection.ui.actions.EditSettingsAction"/>
+      <action id="DisableInspection" class="com.intellij.codeInspection.ui.actions.KeyAwareInspectionViewAction$DisableInspection"/>
+      <action id="RunInspectionOn" class="com.intellij.codeInspection.ui.actions.KeyAwareInspectionViewAction$RunInspectionOn"/>
+    </group>
   </actions>
 </idea-plugin>

@@ -16,10 +16,12 @@
 package org.jetbrains.plugins.javaFX.fxml.refs;
 
 import com.intellij.psi.*;
+import com.intellij.psi.impl.source.resolve.reference.impl.providers.AttributeValueSelfReference;
 import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.psi.util.InheritanceUtil;
 import com.intellij.psi.xml.*;
 import com.intellij.util.ArrayUtil;
+import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.ProcessingContext;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -50,7 +52,9 @@ public class JavaFxFieldIdReferenceProvider extends JavaFxControllerBasedReferen
         }
       }
     }
-    return new PsiReference[]{new JavaFxControllerFieldRef(xmlAttributeValue, fieldOrGetterMethod, aClass)};
+    return new PsiReference[]{
+      new JavaFxControllerFieldRef(xmlAttributeValue, fieldOrGetterMethod, aClass),
+      new AttributeValueSelfReference(xmlAttributeValue)};
   }
 
   public static class JavaFxControllerFieldRef extends PsiReferenceBase<XmlAttributeValue> {
@@ -119,6 +123,12 @@ public class JavaFxFieldIdReferenceProvider extends JavaFxControllerBasedReferen
       return ArrayUtil.toObjectArray(fieldsToSuggest);
     }
 
+    @Override
+    public PsiElement handleElementRename(String newElementName) throws IncorrectOperationException {
+      final String newPropertyName = JavaFxPsiUtil.getPropertyName(newElementName, myFieldOrMethod instanceof PsiMethod);
+      return super.handleElementRename(newPropertyName);
+    }
+
     private PsiClass getGuessedTagClass() {
       final PsiElement xmlAttribute = myXmlAttributeValue.getParent();
       final XmlTag xmlTag = ((XmlAttribute)xmlAttribute).getParent();
@@ -132,7 +142,7 @@ public class JavaFxFieldIdReferenceProvider extends JavaFxControllerBasedReferen
       }
       else if (parentTag.getParent() instanceof XmlDocument) {
         final String name = xmlTag.getName();
-        if (!FxmlConstants.FX_DEFAULT_ELEMENTS.contains(name)) {
+        if (!FxmlConstants.FX_BUILT_IN_TAGS.contains(name)) {
           className = JavaFxCommonNames.JAVAFX_SCENE_NODE;
         }
       }

@@ -15,8 +15,6 @@
  */
 package com.intellij.refactoring.anonymousToInner;
 
-import com.intellij.openapi.application.AcceptNestedTransactions;
-import com.intellij.openapi.application.TransactionKind;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.help.HelpManager;
 import com.intellij.openapi.project.Project;
@@ -44,7 +42,7 @@ import javax.swing.*;
 import java.awt.*;
 import java.util.Map;
 
-@AcceptNestedTransactions(TransactionKind.Common.TEXT_EDITING)class AnonymousToInnerDialog extends DialogWrapper{
+class AnonymousToInnerDialog extends DialogWrapper{
   private static final Logger LOG = Logger.getInstance("#com.intellij.refactoring.anonymousToInner.AnonymousToInnerDialog");
 
   private final Project myProject;
@@ -89,18 +87,16 @@ import java.util.Map;
     String name = myAnonClass.getBaseClassReference().getReferenceName();
     PsiType[] typeParameters = myAnonClass.getBaseClassReference().getTypeParameters();
 
-    final String typeParamsList = StringUtil.join(typeParameters, new Function<PsiType, String>() {
-      public String fun(PsiType psiType) {
-        PsiType type = psiType;
-        if (psiType instanceof PsiClassType) {
-          type = TypeConversionUtil.erasure(psiType);
-        }
-        if (type == null || type.equalsToText(CommonClassNames.JAVA_LANG_OBJECT)) return "";
-        if (type instanceof PsiArrayType) {
-          type = type.getDeepComponentType();
-        }
-        return StringUtil.getShortName(type.getPresentableText());
+    final String typeParamsList = StringUtil.join(typeParameters, psiType -> {
+      PsiType type = psiType;
+      if (psiType instanceof PsiClassType) {
+        type = TypeConversionUtil.erasure(psiType);
       }
+      if (type == null || type.equalsToText(CommonClassNames.JAVA_LANG_OBJECT)) return "";
+      if (type instanceof PsiArrayType) {
+        type = type.getDeepComponentType();
+      }
+      return StringUtil.getShortName(type.getPresentableText());
     }, "") + name;
 
     if (!typeParamsList.equals(name)) {

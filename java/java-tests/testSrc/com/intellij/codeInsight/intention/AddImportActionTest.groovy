@@ -85,6 +85,46 @@ public class Foo {
 '''
   }
 
+  public void testPackageLocalInner() {
+    myFixture.addClass 'package foo; class Outer { static class Inner {static String FOO = "";}}'
+
+    myFixture.configureByText 'a.java', '''\
+package foo;
+class Usage {
+  {
+    String foo = In<caret>ner.FOO;
+  }
+}
+'''
+
+    importClass()
+
+    myFixture.checkResult '''package foo;
+class Usage {
+  {
+    String foo = Outer.Inner.FOO;
+  }
+}
+'''
+  }
+
+  public void testWrongTypeParams() throws Exception {
+    myFixture.addClass 'package f; public class Foo {}'
+    myFixture.configureByText 'a.java', '''\
+public class Bar {
+  Fo<caret>o<String> foo;
+}
+'''
+    importClass()
+    myFixture.checkResult '''\
+import f.Foo;
+
+public class Bar {
+  Foo<String> foo;
+}
+'''
+  }
+
   public void testUseContext() {
     myFixture.addClass 'package foo; public class Log {}'
     myFixture.addClass 'package bar; public class Log {}'

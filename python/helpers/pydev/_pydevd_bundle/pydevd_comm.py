@@ -137,6 +137,7 @@ CMD_SHOW_CONSOLE = 142
 CMD_GET_ARRAY = 143
 CMD_STEP_INTO_MY_CODE = 144
 CMD_GET_CONCURRENCY_EVENT = 145
+CMD_SHOW_RETURN_VALUES = 146
 
 CMD_VERSION = 501
 CMD_RETURN = 502
@@ -189,6 +190,7 @@ ID_TO_MEANING = {
     '143': 'CMD_GET_ARRAY',
     '144': 'CMD_STEP_INTO_MY_CODE',
     '145': 'CMD_GET_CONCURRENCY_EVENT',
+    '146': 'CMD_SHOW_RETURN_VALUES',
 
     '501': 'CMD_VERSION',
     '502': 'CMD_RETURN',
@@ -265,7 +267,9 @@ class PyDBDaemonThread(threading.Thread):
         created_pydb_daemon[self] = 1
         try:
             try:
-                if IS_JYTHON:
+                if IS_JYTHON and not isinstance(threading.currentThread(), threading._MainThread):
+                    # we shouldn't update sys.modules for the main thread, cause it leads to the second importing 'threading'
+                    # module, and the new instance of main thread is created
                     import org.python.core as PyCore #@UnresolvedImport
                     ss = PyCore.PySystemState()
                     # Note: Py.setSystemState() affects only the current thread.
@@ -984,17 +988,7 @@ class InternalGetArray(InternalThreadCommand):
         try:
             frame = pydevd_vars.find_frame(self.thread_id, self.frame_id)
             var = pydevd_vars.eval_in_context(self.name, frame.f_globals, frame.f_locals)
-
-            xml = "<xml>"
-
-            var, metaxml, rows, cols, format = pydevd_vars.array_to_meta_xml(var, self.name, self.format)
-            xml += metaxml
-            self.format = '%' + format
-            if self.rows == -1 and self.cols == -1:
-                self.rows = rows
-                self.cols = cols
-            xml += pydevd_vars.array_to_xml(var, self.roffset, self.coffset, self.rows, self.cols, self.format)
-            xml += "</xml>"
+            xml = pydevd_vars.table_like_struct_to_xml(var, self.name, self.roffset, self.coffset, self.rows, self.cols, self.format )
             cmd = dbg.cmd_factory.make_get_array_message(self.sequence, xml)
             dbg.writer.add_command(cmd)
         except:

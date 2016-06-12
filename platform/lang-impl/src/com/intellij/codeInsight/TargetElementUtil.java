@@ -48,6 +48,7 @@ import com.intellij.psi.*;
 import com.intellij.psi.search.PsiSearchHelper;
 import com.intellij.psi.search.SearchScope;
 import com.intellij.psi.util.PsiTreeUtil;
+import com.intellij.util.BitUtil;
 import com.intellij.util.Consumer;
 import com.intellij.util.ThreeState;
 import com.intellij.util.containers.ContainerUtil;
@@ -139,18 +140,7 @@ public class TargetElementUtil extends TargetElementUtilBase {
 
   private static PsiFile getFile(Project project, Document document) {
     PsiFile file = PsiDocumentManager.getInstance(project).getPsiFile(document);
-
-    if (file != null) {
-      if (ApplicationManager.getApplication().isDispatchThread()) {
-        PsiDocumentManager.getInstance(project).commitAllDocuments();
-      }
-
-      if (file instanceof PsiCompiledFile) {
-        file = ((PsiCompiledFile)file).getDecompiledPsiFile();
-      }
-    }
-
-    return file;
+    return file instanceof PsiCompiledFile ? ((PsiCompiledFile)file).getDecompiledPsiFile() : file;
   }
 
   /**
@@ -235,7 +225,7 @@ public class TargetElementUtil extends TargetElementUtilBase {
     Project project = editor.getProject();
     if (project == null) return null;
 
-    if ((flags & LOOKUP_ITEM_ACCEPTED) != 0) {
+    if (BitUtil.isSet(flags, LOOKUP_ITEM_ACCEPTED)) {
       PsiElement element = getTargetElementFromLookup(project);
       if (element != null) {
         return element;
@@ -249,7 +239,7 @@ public class TargetElementUtil extends TargetElementUtilBase {
     offset = adjustOffset(file, document, offset);
 
     PsiElement element = file.findElementAt(offset);
-    if ((flags & REFERENCED_ELEMENT_ACCEPTED) != 0) {
+    if (BitUtil.isSet(flags, REFERENCED_ELEMENT_ACCEPTED)) {
       final PsiElement referenceOrReferencedElement = getReferenceOrReferencedElement(file, editor, flags, offset);
       //if (referenceOrReferencedElement == null) {
       //  return getReferenceOrReferencedElement(file, editor, flags, offset);
@@ -261,7 +251,7 @@ public class TargetElementUtil extends TargetElementUtilBase {
 
     if (element == null) return null;
 
-    if ((flags & ELEMENT_NAME_ACCEPTED) != 0) {
+    if (BitUtil.isSet(flags, ELEMENT_NAME_ACCEPTED)) {
       if (element instanceof PsiNamedElement) return element;
       return getNamedElement(element, offset - element.getTextRange().getStartOffset());
     }
@@ -285,7 +275,7 @@ public class TargetElementUtil extends TargetElementUtilBase {
 
   protected boolean isAcceptableReferencedElement(@Nullable PsiElement element, @Nullable PsiElement referenceOrReferencedElement) {
     if (referenceOrReferencedElement == null || !referenceOrReferencedElement.isValid()) return false;
-    
+
     TargetElementEvaluatorEx2 evaluator = element != null ? getElementEvaluatorsEx2(element.getLanguage()) : null;
     if (evaluator != null) {
       ThreeState answer = evaluator.isAcceptableReferencedElement(element, referenceOrReferencedElement);
@@ -321,20 +311,17 @@ public class TargetElementUtil extends TargetElementUtilBase {
     if (element == null) return null;
 
     final List<PomTarget> targets = ContainerUtil.newArrayList();
-    final Consumer<PomTarget> consumer = new Consumer<PomTarget>() {
-      @Override
-      public void consume(PomTarget target) {
-        if (target instanceof PsiDeclaredTarget) {
-          final PsiDeclaredTarget declaredTarget = (PsiDeclaredTarget)target;
-          final PsiElement navigationElement = declaredTarget.getNavigationElement();
-          final TextRange range = declaredTarget.getNameIdentifierRange();
-          if (range != null && !range.shiftRight(navigationElement.getTextRange().getStartOffset())
-            .contains(element.getTextRange().getStartOffset() + offsetInElement)) {
-            return;
-          }
+    final Consumer<PomTarget> consumer = target -> {
+      if (target instanceof PsiDeclaredTarget) {
+        final PsiDeclaredTarget declaredTarget = (PsiDeclaredTarget)target;
+        final PsiElement navigationElement = declaredTarget.getNavigationElement();
+        final TextRange range = declaredTarget.getNameIdentifierRange();
+        if (range != null && !range.shiftRight(navigationElement.getTextRange().getStartOffset())
+          .contains(element.getTextRange().getStartOffset() + offsetInElement)) {
+          return;
         }
-        targets.add(target);
       }
+      targets.add(target);
     };
 
     PsiElement parent = element;
@@ -359,16 +346,16 @@ public class TargetElementUtil extends TargetElementUtilBase {
   @Nullable
   private PsiElement getNamedElement(@Nullable final PsiElement element) {
     if (element == null) return null;
-    
+
     TargetElementEvaluatorEx2 evaluator = getElementEvaluatorsEx2(element.getLanguage());
     if (evaluator != null) {
       PsiElement result = evaluator.getNamedElement(element);
       if (result != null) return result;
     }
-    
+
     PsiElement parent;
     if ((parent = PsiTreeUtil.getParentOfType(element, PsiNamedElement.class, false)) != null) {
-      boolean isInjected = parent instanceof PsiFile 
+      boolean isInjected = parent instanceof PsiFile
                            && InjectedLanguageManager.getInstance(parent.getProject()).isInjectedFragment((PsiFile)parent);
       // A bit hacky depends on navigation offset correctly overridden
       if (!isInjected && parent.getTextOffset() == element.getTextRange().getStartOffset()) {
@@ -427,7 +414,7 @@ public class TargetElementUtil extends TargetElementUtilBase {
       Collection<PsiElement> candidates = evaluator.getTargetCandidates(reference);
       if (candidates != null) return candidates;
     }
-    
+
     if (reference instanceof PsiPolyVariantReference) {
       final ResolveResult[] results = ((PsiPolyVariantReference)reference).multiResolve(false);
       List<PsiElement> navigatableResults = new ArrayList<PsiElement>(results.length);

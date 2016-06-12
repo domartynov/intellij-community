@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import com.intellij.openapi.editor.event.DocumentAdapter;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.popup.JBPopup;
 import com.intellij.openapi.ui.popup.JBPopupFactory;
-import com.intellij.openapi.util.Condition;
+import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
@@ -56,6 +56,7 @@ import com.intellij.ui.popup.AbstractPopup;
 import com.intellij.util.CollectConsumer;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.io.storage.HeavyProcessLatch;
+import com.intellij.util.ui.accessibility.AccessibleContextUtil;
 import com.intellij.util.ui.update.Activatable;
 import com.intellij.util.ui.update.UiNotifyConnector;
 import org.jetbrains.annotations.NotNull;
@@ -69,27 +70,23 @@ import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class LookupImpl extends LightweightHint implements LookupEx, Disposable, WeighingContext {
+public class LookupImpl extends LightweightHint implements LookupEx, Disposable {
   private static final Logger LOG = Logger.getInstance("#com.intellij.codeInsight.lookup.impl.LookupImpl");
 
   private final LookupOffsets myOffsets;
   private final Project myProject;
   private final Editor myEditor;
+  private final Object myLock = new Object();
   private final JBList myList = new JBList(new CollectionListModel<LookupElement>()) {
     @Override
     protected void processKeyEvent(@NotNull final KeyEvent e) {
       final char keyChar = e.getKeyChar();
       if (keyChar == KeyEvent.VK_ENTER || keyChar == KeyEvent.VK_TAB) {
-        IdeFocusManager.getInstance(myProject).requestFocus(myEditor.getContentComponent(), true).doWhenDone(new Runnable() {
-          @Override
-          public void run() {
-            IdeEventQueue.getInstance().getKeyEventDispatcher().dispatchKeyEvent(e);
-          }
-        });
+        IdeFocusManager.getInstance(myProject).requestFocus(myEditor.getContentComponent(), true).doWhenDone(
+          () -> IdeEventQueue.getInstance().getKeyEventDispatcher().dispatchKeyEvent(e));
         return;
       }
 
@@ -119,10 +116,8 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   private boolean myChangeGuard;
   private volatile LookupArranger myArranger;
   private LookupArranger myPresentableArranger;
-  private final Map<LookupElement, PrefixMatcher> myMatchers =
-    ContainerUtil.createConcurrentWeakMap(ContainerUtil.<LookupElement>identityStrategy());
   private final Map<LookupElement, Font> myCustomFonts = ContainerUtil.createConcurrentWeakMap(10, 0.75f, Runtime.getRuntime().availableProcessors(),
-    ContainerUtil.<LookupElement>identityStrategy());
+    ContainerUtil.identityStrategy());
   private boolean myStartCompletionWhenNothingMatches;
   boolean myResizePending;
   private boolean myFinishing;
@@ -148,6 +143,11 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
     myList.setFocusable(false);
     myList.setFixedCellWidth(50);
+
+    // a new top level frame just got the focus. This is important to prevent screen readers
+    // from announcing the title of the top level frame when the list is shown (or hidden),
+    // as they usually do when a new top-level frame receives the focus.
+    AccessibleContextUtil.setParent(myList, myEditor.getContentComponent());
 
     myList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
     myList.setBackground(LookupCellRenderer.BACKGROUND_COLOR);
@@ -214,10 +214,11 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   public void resort(boolean addAgain) {
     final List<LookupElement> items = getItems();
 
-    synchronized (myList) {
+    withLock(() -> {
       myPresentableArranger.prefixChanged(this);
       getListModel().removeAll();
-    }
+      return null;
+    });
 
     if (addAgain) {
       for (final LookupElement item : items) {
@@ -235,11 +236,12 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
       return false;
     }
 
-    myMatchers.put(item, matcher);
     updateLookupWidth(item, presentation);
-    synchronized (myList) {
-      myArranger.addElement(this, item, presentation);
-    }
+    withLock(() -> {
+      myArranger.registerMatcher(item, matcher);
+      myArranger.addElement(item, presentation);
+      return null;
+    });
     return true;
   }
 
@@ -288,12 +290,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
   @Override
   public List<LookupElement> getItems() {
-    if (ApplicationManager.getApplication().isDispatchThread()) {
-      HeavyProcessLatch.INSTANCE.stopThreadPrioritizing();
-    }
-    synchronized (myList) {
-      return ContainerUtil.findAll(getListModel().toList(), element -> !(element instanceof EmptyLookupItem));
-    }
+    return withLock(() -> ContainerUtil.findAll(getListModel().toList(), element -> !(element instanceof EmptyLookupItem)));
   }
 
   public String getAdditionalPrefix() {
@@ -303,9 +300,10 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   void appendPrefix(char c) {
     checkValid();
     myOffsets.appendPrefix(c);
-    synchronized (myList) {
+    withLock(() -> {
       myPresentableArranger.prefixChanged(this);
-    }
+      return null;
+    });
     requestResize();
     refreshUi(false, true);
     ensureSelectionVisible(true);
@@ -353,11 +351,10 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
       markSelectionTouched();
     }
 
-    boolean shouldUpdate;
-    synchronized (myList) {
-      shouldUpdate = myPresentableArranger == myArranger;
+    boolean shouldUpdate = withLock(() -> {
       myPresentableArranger.prefixChanged(this);
-    }
+      return myPresentableArranger == myArranger;
+    });
     requestResize();
     if (shouldUpdate) {
       refreshUi(false, true);
@@ -375,11 +372,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
     CollectionListModel<LookupElement> listModel = getListModel();
 
-    Pair<List<LookupElement>, Integer> pair;
-    synchronized (myList) {
-      pair = myPresentableArranger.arrangeItems(this, onExplicitAction || reused);
-    }
-    
+    Pair<List<LookupElement>, Integer> pair = withLock(() -> myPresentableArranger.arrangeItems(this, onExplicitAction || reused));
     List<LookupElement> items = pair.first;
     Integer toSelect = pair.second;
     if (toSelect == null || toSelect < 0 || items.size() > 0 && toSelect >= items.size()) {
@@ -409,7 +402,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   }
 
   private boolean checkReused() {
-    synchronized (myList) {
+    return withLock(() -> {
       if (myPresentableArranger != myArranger) {
         myPresentableArranger = myArranger;
         myOffsets.clearAdditionalPrefix();
@@ -417,7 +410,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
         return true;
       }
       return false;
-    }
+    });
   }
 
   private void updateListHeight(ListModel model) {
@@ -428,7 +421,6 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
   private void addEmptyItem(CollectionListModel<LookupElement> model) {
     LookupElement item = new EmptyLookupItem(myCalculating ? " " : LangBundle.message("completion.no.suggestions"), false);
-    myMatchers.put(item, new CamelHumpMatcher(""));
     model.add(item);
 
     updateLookupWidth(item);
@@ -444,23 +436,17 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   @NotNull
   @Override
   public String itemPattern(@NotNull LookupElement element) {
-    String prefix = itemMatcher(element).getPrefix();
-    String additionalPrefix = getAdditionalPrefix();
-    return additionalPrefix.isEmpty() ? prefix : prefix + additionalPrefix;
+    if (element instanceof EmptyLookupItem) return "";
+    return myPresentableArranger.itemPattern(element);
   }
 
   @Override
   @NotNull
   public PrefixMatcher itemMatcher(@NotNull LookupElement item) {
-    PrefixMatcher matcher = itemMatcherNullable(item);
-    if (matcher == null) {
-      throw new AssertionError("Item not in lookup: item=" + item + "; lookup items=" + getItems());
+    if (item instanceof EmptyLookupItem) {
+      return new CamelHumpMatcher("");
     }
-    return matcher;
-  }
-
-  public PrefixMatcher itemMatcherNullable(LookupElement item) {
-    return myMatchers.get(item);
+    return myPresentableArranger.itemMatcher(item);
   }
 
   public void finishLookup(final char completionChar) {
@@ -470,6 +456,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   public void finishLookup(char completionChar, @Nullable final LookupElement item) {
     //noinspection deprecation,unchecked
     if (item == null ||
+        !item.isValid() ||
         item instanceof EmptyLookupItem ||
         item.getObject() instanceof DeferredUserLookupValue &&
         item.as(LookupItem.CLASS_CONDITION_KEY) != null &&
@@ -496,26 +483,19 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
     }
 
     final String prefix = itemPattern(item);
-    boolean plainMatch = ContainerUtil.or(item.getAllLookupStrings(), new Condition<String>() {
-      @Override
-      public boolean value(String s) {
-        return StringUtil.containsIgnoreCase(s, prefix);
-      }
-    });
+    boolean plainMatch = ContainerUtil.or(item.getAllLookupStrings(), s -> StringUtil.containsIgnoreCase(s, prefix));
     if (!plainMatch) {
       FeatureUsageTracker.getInstance().triggerFeatureUsed(CodeCompletionFeatures.EDITING_COMPLETION_CAMEL_HUMPS);
     }
 
     myFinishing = true;
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      public void run() {
-        myEditor.getDocument().startGuardedBlockChecking();
-        try {
-          insertLookupString(item, getPrefixLength(item));
-        }
-        finally {
-          myEditor.getDocument().stopGuardedBlockChecking();
-        }
+    ApplicationManager.getApplication().runWriteAction(() -> {
+      myEditor.getDocument().startGuardedBlockChecking();
+      try {
+        insertLookupString(item, getPrefixLength(item));
+      }
+      finally {
+        myEditor.getDocument().stopGuardedBlockChecking();
       }
     });
 
@@ -764,12 +744,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
         markSelectionTouched();
 
         if (clickCount == 2){
-          CommandProcessor.getInstance().executeCommand(myProject, new Runnable() {
-            @Override
-            public void run() {
-              finishLookup(NORMAL_SELECT_CHAR);
-            }
-          }, "", null);
+          CommandProcessor.getInstance().executeCommand(myProject, () -> finishLookup(NORMAL_SELECT_CHAR), "", null);
         }
         return true;
       }
@@ -818,7 +793,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
   public void fireItemSelected(@Nullable final LookupElement item, char completionChar){
     PsiDocumentManager.getInstance(myProject).commitAllDocuments();
-
+    myArranger.itemSelected(item, completionChar);
     if (!myListeners.isEmpty()){
       LookupEvent event = new LookupEvent(this, item, completionChar);
       for (LookupListener listener : myListeners) {
@@ -917,36 +892,20 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   }
 
   public void replacePrefix(final String presentPrefix, final String newPrefix) {
-    if (!performGuardedChange(new Runnable() {
-      @Override
-      public void run() {
-        EditorModificationUtil.deleteSelectedText(myEditor);
-        int offset = myEditor.getCaretModel().getOffset();
-        final int start = offset - presentPrefix.length();
-        myEditor.getDocument().replaceString(start, offset, newPrefix);
-
-        Map<LookupElement, PrefixMatcher> newMatchers = new HashMap<LookupElement, PrefixMatcher>();
-        for (LookupElement item : getItems()) {
-          if (item.isValid()) {
-            PrefixMatcher matcher = itemMatcher(item).cloneWithPrefix(newPrefix);
-            if (matcher.prefixMatches(item)) {
-              newMatchers.put(item, matcher);
-            }
-          }
-        }
-        myMatchers.clear();
-        myMatchers.putAll(newMatchers);
-
-        myOffsets.clearAdditionalPrefix();
-
-        myEditor.getCaretModel().moveToOffset(start + newPrefix.length());
-      }
+    if (!performGuardedChange(() -> {
+      EditorModificationUtil.deleteSelectedText(myEditor);
+      int offset = myEditor.getCaretModel().getOffset();
+      final int start = offset - presentPrefix.length();
+      myEditor.getDocument().replaceString(start, offset, newPrefix);
+      myOffsets.clearAdditionalPrefix();
+      myEditor.getCaretModel().moveToOffset(start + newPrefix.length());
     })) {
       return;
     }
-    synchronized (myList) {
-      myPresentableArranger.prefixChanged(this);
-    }
+    withLock(() -> {
+      myPresentableArranger.prefixReplaced(this, newPrefix);
+      return null;
+    });
     refreshUi(true, true);
   }
 
@@ -1105,9 +1064,7 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
   }
 
   public void markReused() {
-    synchronized (myList) {
-      myArranger = myArranger.createEmptyCopy();
-    }
+    withLock(() -> myArranger = myArranger.createEmptyCopy());
     requestResize();
   }
 
@@ -1156,11 +1113,19 @@ public class LookupImpl extends LightweightHint implements LookupEx, Disposable,
 
   @NotNull
   public Map<LookupElement, List<Pair<String, Object>>> getRelevanceObjects(@NotNull Iterable<LookupElement> items, boolean hideSingleValued) {
-    synchronized (myList) {
-      return myPresentableArranger.getRelevanceObjects(items, hideSingleValued);
+    return withLock(() -> myPresentableArranger.getRelevanceObjects(items, hideSingleValued));
+  }
+
+  private <T> T withLock(Computable<T> computable) {
+    if (ApplicationManager.getApplication().isDispatchThread()) {
+      HeavyProcessLatch.INSTANCE.stopThreadPrioritizing();
+    }
+    synchronized (myLock) {
+      return computable.compute();
     }
   }
 
+  @SuppressWarnings("unused")
   public void setPrefixChangeListener(PrefixChangeListener listener) {
     myPrefixChangeListener = listener;
   }

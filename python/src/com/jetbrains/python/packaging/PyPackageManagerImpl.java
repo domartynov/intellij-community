@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,9 +41,6 @@ import com.intellij.util.messages.MessageBusConnection;
 import com.intellij.util.net.HttpConfigurable;
 import com.jetbrains.python.PythonHelpersLocator;
 import com.jetbrains.python.psi.LanguageLevel;
-import com.jetbrains.python.psi.PyExpression;
-import com.jetbrains.python.psi.PyListLiteralExpression;
-import com.jetbrains.python.psi.PyStringLiteralExpression;
 import com.jetbrains.python.sdk.PySdkUtil;
 import com.jetbrains.python.sdk.PythonEnvUtil;
 import com.jetbrains.python.sdk.PythonSdkType;
@@ -91,20 +88,14 @@ public class PyPackageManagerImpl extends PyPackageManager {
   public void refresh() {
     LOG.debug("Refreshing SDK roots and packages cache");
     final Application application = ApplicationManager.getApplication();
-    application.invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        final Sdk sdk = getSdk();
-        application.runWriteAction(new Runnable() {
-          @Override
-          public void run() {
-            final VirtualFile[] files = sdk.getRootProvider().getFiles(OrderRootType.CLASSES);
-            VfsUtil.markDirtyAndRefresh(true, true, true, files);
-          }
-        });
-        PythonSdkType.getInstance().setupSdkPaths(sdk);
-        clearCaches();
-      }
+    application.invokeLater(() -> {
+      final Sdk sdk = getSdk();
+      application.runWriteAction(() -> {
+        final VirtualFile[] files = sdk.getRootProvider().getFiles(OrderRootType.CLASSES);
+        VfsUtil.markDirtyAndRefresh(true, true, true, files);
+      });
+      PythonSdkType.getInstance().setupSdkPaths(sdk);
+      clearCaches();
     });
   }
 
@@ -186,7 +177,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
   @Override
   public void install(@NotNull String requirementString) throws ExecutionException {
     installManagement();
-    install(Collections.singletonList(PyRequirement.fromString(requirementString)), Collections.<String>emptyList());
+    install(Collections.singletonList(PyRequirement.fromLine(requirementString)), Collections.<String>emptyList());
   }
 
   @Override
@@ -213,7 +204,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
     }
     args.addAll(extraArgs);
     for (PyRequirement req : requirements) {
-      args.addAll(req.toOptions());
+      args.add(req.getInstallOptions());
     }
     try {
       getHelperResult(PACKAGING_TOOL, args, !useUserSite, true, null);
@@ -227,7 +218,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
       }
       simplifiedArgs.addAll(extraArgs);
       for (PyRequirement req : requirements) {
-        simplifiedArgs.addAll(req.toOptions());
+        simplifiedArgs.add(req.getInstallOptions());
       }
       throw new PyExecutionException(e.getMessage(), "pip", simplifiedArgs, e.getStdout(), e.getStderr(), e.getExitCode(), e.getFixes());
     }
@@ -409,28 +400,9 @@ public class PyPackageManagerImpl extends PyPackageManager {
 
   @Nullable
   public List<PyRequirement> getRequirements(@NotNull Module module) {
-    List<PyRequirement> requirements = PySdkUtil.getRequirementsFromTxt(module);
-    if (requirements != null) {
-      return requirements;
-    }
-    final List<String> lines = new ArrayList<String>();
-    for (String name : PyPackageUtil.SETUP_PY_REQUIRES_KWARGS_NAMES) {
-      final PyListLiteralExpression installRequires = PyPackageUtil.findSetupPyRequires(module, name);
-      if (installRequires != null) {
-        for (PyExpression e : installRequires.getElements()) {
-          if (e instanceof PyStringLiteralExpression) {
-            lines.add(((PyStringLiteralExpression)e).getStringValue());
-          }
-        }
-      }
-    }
-    if (!lines.isEmpty()) {
-      return PyRequirement.parse(StringUtil.join(lines, "\n"));
-    }
-    if (PyPackageUtil.findSetupPy(module) != null) {
-      return Collections.emptyList();
-    }
-    return null;
+    return Optional
+      .ofNullable(PyPackageUtil.getRequirementsFromTxt(module))
+      .orElseGet(() -> PyPackageUtil.findSetupPyRequires(module));
   }
 
   protected void clearCaches() {
@@ -576,7 +548,7 @@ public class PyPackageManagerImpl extends PyPackageManager {
       if (fields.size() >= 4) {
         final String requiresLine = fields.get(3);
         final String requiresSpec = StringUtil.join(StringUtil.split(requiresLine, ":"), "\n");
-        requirements.addAll(PyRequirement.parse(requiresSpec));
+        requirements.addAll(PyRequirement.fromText(requiresSpec));
       }
       if (!"Python".equals(name)) {
         packages.add(new PyPackage(name, version, location, requirements));

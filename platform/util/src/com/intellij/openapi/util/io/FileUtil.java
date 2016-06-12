@@ -98,6 +98,10 @@ public class FileUtil extends FileUtilRt {
     return new File(path).isAbsolute();
   }
 
+  public static boolean exists(@Nullable String path) {
+    return path != null && new File(path).exists();
+  }
+
   /**
    * Check if the {@code ancestor} is an ancestor of {@code file}.
    *
@@ -206,6 +210,15 @@ public class FileUtil extends FileUtilRt {
       }
     }
     return result;
+  }
+
+  @Nullable
+  public static File findAncestor(@NotNull File f1, @NotNull File f2) {
+    File ancestor = f1;
+    while (ancestor != null && !isAncestor(ancestor, f2, false)) {
+      ancestor = ancestor.getParentFile();
+    }
+    return ancestor;
   }
 
   @Nullable
@@ -459,6 +472,7 @@ public class FileUtil extends FileUtilRt {
 
   @SuppressWarnings("Duplicates")
   private static void performCopy(@NotNull File fromFile, @NotNull File toFile, final boolean syncTimestamp) throws IOException {
+    if (filesEqual(fromFile, toFile)) return;
     final FileOutputStream fos;
     try {
       fos = openOutputStream(toFile);

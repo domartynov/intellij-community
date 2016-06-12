@@ -15,22 +15,24 @@
  */
 package com.jetbrains.env;
 
-import com.intellij.execution.ExecutionException;
 import com.intellij.execution.process.ProcessAdapter;
 import com.intellij.execution.process.ProcessEvent;
+import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessOutputTypes;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.Ref;
-import com.intellij.util.concurrency.Semaphore;
 import com.intellij.xdebugger.XDebuggerTestUtil;
 import com.jetbrains.python.sdkTools.SdkCreationType;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.lang.reflect.InvocationTargetException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * <h1>Task that knows how to execute some process with console.</h1>
@@ -53,6 +55,7 @@ import java.lang.reflect.InvocationTargetException;
  * @author Ilya.Kazakevich
  */
 public abstract class PyProcessWithConsoleTestTask<T extends ProcessWithConsoleRunner> extends PyExecutionFixtureTestTask {
+  private static final Logger LOG = Logger.getInstance(PyProcessWithConsoleTestTask.class);
   @NotNull
   private final SdkCreationType myRequiredSdkType;
 
@@ -79,18 +82,28 @@ public abstract class PyProcessWithConsoleTestTask<T extends ProcessWithConsoleR
 
   private void executeRunner(final String sdkHome, final T runner) throws InterruptedException, InvocationTargetException {
     // Semaphore to wait end of process
-    final Semaphore processFinishedSemaphore = new Semaphore();
-    processFinishedSemaphore.down();
+    final Semaphore processFinishedSemaphore = new Semaphore(1);
+    processFinishedSemaphore.acquire();
     final StringBuilder stdOut = new StringBuilder();
     final StringBuilder stdErr = new StringBuilder();
     final StringBuilder stdAll = new StringBuilder();
-    final Ref<Boolean> failed = new Ref<Boolean>(false);
+    final Ref<Boolean> failed = new Ref<>(false);
+    final Ref<ProcessHandler> processHandlerRef = new Ref<>();
+
 
     final ProcessAdapter processListener = new ProcessAdapter() {
       @Override
       public void processTerminated(final ProcessEvent event) {
         super.processTerminated(event);
-        processFinishedSemaphore.up();
+        processHandlerRef.set(null);
+        processFinishedSemaphore.release();
+        LOG.info(String.format("Thread finished %s", Thread.currentThread()));
+      }
+
+      @Override
+      public void startNotified(final ProcessEvent event) {
+        super.startNotified(event);
+        processHandlerRef.set(event.getProcessHandler());
       }
 
       @Override
@@ -108,23 +121,32 @@ public abstract class PyProcessWithConsoleTestTask<T extends ProcessWithConsoleR
     };
 
     // Invoke runner
-    ApplicationManager.getApplication().invokeAndWait(new Runnable() {
-      @Override
-      public void run() {
-        try {
-          runner.runProcess(sdkHome, getProject(), processListener);
-        }
-        catch (final Throwable e) {
-          final IllegalStateException exception = new IllegalStateException("Exception thrown while running test", e);
-          failed.set(true);
-          processFinishedSemaphore.up();
-          throw exception;
-        }
+    ApplicationManager.getApplication().invokeAndWait(() -> {
+      try {
+        runner.runProcess(sdkHome, getProject(), processListener);
+      }
+      catch (final Throwable e) {
+        failed.set(true);
+        processFinishedSemaphore.release();
+        final IllegalStateException exception = new IllegalStateException("Exception thrown while running test", e);
+        throw exception;
       }
     }, ModalityState.NON_MODAL);
 
 
-    processFinishedSemaphore.waitFor(60000);
+    LOG.info(String.format("Waiting for result on thread %s", Thread.currentThread()));
+    final boolean finishedSuccessfully = processFinishedSemaphore.tryAcquire(5, TimeUnit.MINUTES);
+    if (!finishedSuccessfully) {
+      LOG.warn("Time out waiting for test finish");
+      final ProcessHandler handler = processHandlerRef.get();
+      if (handler != null) {
+        LOG.warn("We have leaked process, will kill it");
+        handler.destroyProcess(); // To prevent process leak
+        handler.waitFor();
+        Thread.sleep(1000); // Give time to listening threads to process process death
+      }
+      throw new AssertionError(String.format("Timeout waiting for process to finish. Current output is %s", stdAll));
+    }
     XDebuggerTestUtil.waitForSwing();
     if (failed.get()) {
       Assert.fail("Failed to run test, see logs for exceptions");

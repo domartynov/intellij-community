@@ -73,6 +73,11 @@ public class JavaSpacePropertyProcessor extends JavaElementVisitor {
   private static final ThreadLocal<JavaSpacePropertyProcessor> mySharedProcessorAllocator = new ThreadLocal<JavaSpacePropertyProcessor>();
 
   private void doInit(ASTNode child, CommonCodeStyleSettings settings, JavaCodeStyleSettings javaSettings) {
+    if (isErrorElement(child)) {
+      myResult = Spacing.getReadOnlySpacing();
+      return;
+    }
+    
     init(child);
     mySettings = settings;
     myJavaSettings = javaSettings;
@@ -124,6 +129,10 @@ public class JavaSpacePropertyProcessor extends JavaElementVisitor {
         }
       }
     }
+  }
+
+  private static boolean isErrorElement(ASTNode child) {
+    return child != null && child.getPsi() instanceof PsiErrorElement;
   }
 
   private void clear() {
@@ -1462,10 +1471,6 @@ public class JavaSpacePropertyProcessor extends JavaElementVisitor {
     else {
       if (!space && !canStickChildrenTogether(myChild1, myChild2)) {
         space = true;
-      }
-
-      if (!keepLineBreaks && myRole2 == ChildRoleBase.NONE) {
-        keepLineBreaks = true;
       }
       myResult = Spacing.createSpacing(space ? 1 : 0, space ? 1 : 0, 0, keepLineBreaks, keepBlankLines);
     }

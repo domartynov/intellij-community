@@ -428,12 +428,7 @@ public class PyDocstringGenerator {
       if (myAddFirstEmptyLine) {
         sectionBuilder.addEmptyLine();
       }
-      final List<DocstringParam> parameters = ContainerUtil.findAll(myAddedParams, new Condition<DocstringParam>() {
-        @Override
-        public boolean value(DocstringParam param) {
-          return !param.isReturnValue();
-        }
-      });
+      final List<DocstringParam> parameters = ContainerUtil.findAll(myAddedParams, param -> !param.isReturnValue());
       if (!parameters.isEmpty()) {
         sectionBuilder.startParametersSection();
         for (DocstringParam param : parameters) {
@@ -441,12 +436,7 @@ public class PyDocstringGenerator {
         }
       }
 
-      final List<DocstringParam> returnValues = ContainerUtil.findAll(myAddedParams, new Condition<DocstringParam>() {
-        @Override
-        public boolean value(DocstringParam param) {
-          return param.isReturnValue();
-        }
-      });
+      final List<DocstringParam> returnValues = ContainerUtil.findAll(myAddedParams, param -> param.isReturnValue());
 
       if (!returnValues.isEmpty()) {
         sectionBuilder.startReturnsSection();
@@ -540,7 +530,7 @@ public class PyDocstringGenerator {
         throw new IllegalStateException("Should be a function or class");
       }
       final PyStatementList statements = container.getStatementList();
-      final String indentation = PyIndentUtil.getExpectedElementIndent(statements);
+      final String indentation = PyIndentUtil.getElementIndent(statements);
       final Document document = PsiDocumentManager.getInstance(project).getDocument(myDocStringOwner.getContainingFile());
 
       if (document != null) {

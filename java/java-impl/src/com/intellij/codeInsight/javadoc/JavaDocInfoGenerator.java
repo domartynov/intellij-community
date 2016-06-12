@@ -50,7 +50,6 @@ import com.intellij.psi.util.PsiFormatUtilBase;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.util.ArrayUtil;
 import com.intellij.util.ArrayUtilRt;
-import com.intellij.util.Function;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.xml.util.XmlStringUtil;
@@ -446,12 +445,7 @@ public class JavaDocInfoGenerator {
           buffer.append("<html><body></body></html>");
         }
         String errorSection = "<p id=\"error\">Following external urls were checked:<br>&nbsp;&nbsp;&nbsp;<i>" +
-                              StringUtil.join(docURLs, new Function<String, String>() {
-                                @Override
-                                public String fun(String url) {
-                                  return XmlStringUtil.escapeString(url);
-                                }
-                              }, "</i><br>&nbsp;&nbsp;&nbsp;<i>") +
+                              StringUtil.join(docURLs, XmlStringUtil::escapeString, "</i><br>&nbsp;&nbsp;&nbsp;<i>") +
                               "</i><br>The documentation for this element is not found. Please add all the needed paths to API docs in " +
                               "<a href=\"open://Project Settings\">Project Settings.</a></p>";
         buffer.insert(buffer.indexOf("<body>"), errorSection);
@@ -495,14 +489,12 @@ public class JavaDocInfoGenerator {
         buffer.append("<small><b>");
         buffer.append(packageName);
         buffer.append("</b></small>");
-        //buffer.append("<br>");
       }
     }
 
     buffer.append("<PRE>");
     if (generateClassSignature(buffer, aClass, true)) return;
     buffer.append("</PRE>");
-    //buffer.append("<br>");
 
     PsiDocComment comment = getDocComment(aClass);
     if (comment != null) {
@@ -521,7 +513,7 @@ public class JavaDocInfoGenerator {
       buffer.append(modifiers);
       buffer.append(" ");
     }
-    buffer.append(aClass.isInterface() ? LangBundle.message("java.terms.interface") : LangBundle.message("java.terms.class"));
+    buffer.append(LangBundle.message(aClass.isInterface() ? "java.terms.interface" : "java.terms.class"));
     buffer.append(" ");
     String refText = JavaDocUtil.getReferenceText(aClass.getProject(), aClass);
     if (refText == null) {
@@ -656,7 +648,6 @@ public class JavaDocInfoGenerator {
     buffer.append("<PRE>");
     generateFieldSignature(buffer, field, true);
     buffer.append("</PRE>");
-    //buffer.append("<br>");
 
     ColorUtil.appendColorPreview(field, buffer);
 
@@ -714,7 +705,6 @@ public class JavaDocInfoGenerator {
     appendInitializer(buffer, variable);
     buffer.append("</b>");
     buffer.append("</PRE>");
-    //buffer.append("<br>");
 
     ColorUtil.appendColorPreview(variable, buffer);
 
@@ -1093,9 +1083,7 @@ public class JavaDocInfoGenerator {
 
     buffer.append("<PRE>");
     generateMethodSignature(buffer, method, true, false);
-
     buffer.append("</PRE>");
-    //buffer.append("<br>");
 
     PsiDocComment comment = getMethodDocComment(method);
 
@@ -1255,7 +1243,9 @@ public class JavaDocInfoGenerator {
     String s = buffer.toString();
     PsiClass containingClass = method.getContainingClass();
     assert containingClass != null;
-    s = StringUtil.replace(s, "<ClassName>", containingClass.getName());
+    String containingClassName = containingClass.getName();
+    assert containingClassName != null;
+    s = StringUtil.replace(s, "<ClassName>", containingClassName);
     final PsiElementFactory elementFactory = JavaPsiFacade.getInstance(myProject).getElementFactory();
     try {
       return elementFactory.createDocCommentFromText(s);
@@ -1381,9 +1371,8 @@ public class JavaDocInfoGenerator {
       if (elements != null) {
         buffer.append("<DD><DL>");
         buffer.append("<DT><b>");
-        buffer.append(extendee.isInterface() ?
-                      CodeInsightBundle.message("javadoc.description.copied.from.interface") :
-                      CodeInsightBundle .message("javadoc.description.copied.from.class"));
+        buffer.append(CodeInsightBundle.message( extendee.isInterface() ? "javadoc.description.copied.from.interface"
+                                                                        : "javadoc.description.copied.from.class"));
         buffer.append("</b>&nbsp;");
         generateLink(buffer, extendee, JavaDocUtil.getShortestClassName(extendee, method), false);
         buffer.append(BR_TAG);
@@ -1892,7 +1881,7 @@ public class JavaDocInfoGenerator {
     for (PsiMethod superMethod : supers) {
       boolean isAbstract = superMethod.hasModifierProperty(PsiModifier.ABSTRACT);
       if (overrides) {
-        if (parentClass.isInterface() ? !isAbstract : isAbstract) continue;
+        if (parentClass.isInterface() != isAbstract) continue;
       }
       else {
         if (!isAbstract) continue;
@@ -1902,9 +1891,7 @@ public class JavaDocInfoGenerator {
       if (!headerGenerated) {
         buffer.append("<DD><DL>");
         buffer.append("<DT><b>");
-        buffer.append(overrides ?
-                      CodeInsightBundle.message("javadoc.method.overrides") :
-                      CodeInsightBundle .message("javadoc.method.specified.by"));
+        buffer.append(CodeInsightBundle.message(overrides ? "javadoc.method.overrides" : "javadoc.method.specified.by"));
         buffer.append("</b>");
         headerGenerated = true;
       }
@@ -2302,13 +2289,12 @@ public class JavaDocInfoGenerator {
       if (type != null) {
         generateType(myBuffer, type, expression);
       }
-      myBuffer.append("(");
       expression.acceptChildren(this);
-      myBuffer.append(")");
     }
 
     @Override
     public void visitExpressionList(PsiExpressionList list) {
+      myBuffer.append("(");
       String separator = ", ";
       PsiExpression[] expressions = list.getExpressions();
       for (PsiExpression expression : expressions) {
@@ -2318,17 +2304,17 @@ public class JavaDocInfoGenerator {
       if (expressions.length > 0) {
         myBuffer.setLength(myBuffer.length() - separator.length());
       }
-    }
-
-    @Override
-    public void visitMethodCallExpression(PsiMethodCallExpression expression) {
-      myBuffer.append(StringUtil.escapeXml(expression.getMethodExpression().getText())).append("(");
-      expression.getArgumentList().accept(this);
       myBuffer.append(")");
     }
 
     @Override
-    public void visitLiteralExpression(PsiLiteralExpression expression) {
+    public void visitMethodCallExpression(PsiMethodCallExpression expression) {
+      myBuffer.append(StringUtil.escapeXml(expression.getMethodExpression().getText()));
+      expression.getArgumentList().accept(this);
+    }
+
+    @Override
+    public void visitExpression(PsiExpression expression) {
       myBuffer.append(StringUtil.escapeXml(expression.getText()));
     }
 

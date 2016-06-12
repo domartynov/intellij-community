@@ -19,7 +19,9 @@ import com.intellij.openapi.project.Project;
 import com.intellij.psi.*;
 import com.intellij.psi.util.*;
 import com.intellij.util.ArrayUtil;
-import com.intellij.util.CommonProcessors;
+import com.intellij.util.Consumer;
+import com.intellij.util.Processor;
+import com.intellij.util.Processors;
 import com.intellij.util.containers.ConcurrentFactoryMap;
 import com.intellij.util.containers.ContainerUtil;
 import gnu.trove.THashSet;
@@ -197,14 +199,16 @@ public class AnnotationUtil {
       @Nullable
       @Override
       public Result<List<T>> compute() {
-        LinkedHashSet<PsiModifierListOwner> result = ContainerUtil.newLinkedHashSet();
+        Set<PsiModifierListOwner> result = ContainerUtil.newLinkedHashSet();
         if (element instanceof PsiMethod) {
           collectSuperMethods(result, ((PsiMethod)element).getHierarchicalMethodSignature(), element,
                               JavaPsiFacade.getInstance(element.getProject()).getResolveHelper());
-        } else if (element instanceof PsiClass) {
+        }
+        else if (element instanceof PsiClass) {
           //noinspection unchecked
-          InheritanceUtil.processSupers((PsiClass)element, false, new CommonProcessors.CollectProcessor<PsiClass>((Set)result));
-        } else if (element instanceof PsiParameter) {
+          InheritanceUtil.processSupers((PsiClass)element, false, (Processor)Processors.cancelableCollectProcessor(result));
+        }
+        else if (element instanceof PsiParameter) {
           collectSuperParameters(result, (PsiParameter)element);
         }
 
@@ -249,27 +253,40 @@ public class AnnotationUtil {
     return map.get(annotationNames);
   }
 
-  private static void collectSuperParameters(LinkedHashSet<PsiModifierListOwner> result, @NotNull PsiParameter parameter) {
-    PsiElement scope = parameter.getDeclarationScope();
-    if (!(scope instanceof PsiMethod)) {
-      return;
-    }
-    PsiMethod method = (PsiMethod)scope;
-
+  private static void collectSuperParameters(@NotNull final Set<PsiModifierListOwner> result, @NotNull PsiParameter parameter) {
     PsiElement parent = parameter.getParent();
     if (!(parent instanceof PsiParameterList)) {
       return;
     }
-    int index = ((PsiParameterList)parent).getParameterIndex(parameter);
-    for (PsiMethod superMethod : getSuperAnnotationOwners(method)) {
-      PsiParameter[] superParameters = superMethod.getParameterList().getParameters();
-      if (index < superParameters.length) {
-        result.add(superParameters[index]);
+    final int index = ((PsiParameterList)parent).getParameterIndex(parameter);
+    Consumer<PsiMethod> forEachSuperMethod = new Consumer<PsiMethod>() {
+      @Override
+      public void consume(PsiMethod method) {
+        PsiParameter[] superParameters = method.getParameterList().getParameters();
+        if (index < superParameters.length) {
+          result.add(superParameters[index]);
+        }
+      }
+    };
+
+    PsiElement scope = parent.getParent();
+    if (scope instanceof PsiLambdaExpression) {
+      PsiMethod method = LambdaUtil.getFunctionalInterfaceMethod(((PsiLambdaExpression)scope).getFunctionalInterfaceType());
+      if (method != null) {
+        forEachSuperMethod.consume(method);
+        for (PsiMethod superMethod : getSuperAnnotationOwners(method)) {
+          forEachSuperMethod.consume(superMethod);
+        }
+      }
+    }
+    else if (scope instanceof PsiMethod) {
+      for (PsiMethod superMethod : getSuperAnnotationOwners((PsiMethod)scope)) {
+        forEachSuperMethod.consume(superMethod);
       }
     }
   }
 
-  private static void collectSuperMethods(LinkedHashSet<PsiModifierListOwner> result,
+  private static void collectSuperMethods(@NotNull Set<PsiModifierListOwner> result,
                                           @NotNull HierarchicalMethodSignature signature,
                                           @NotNull PsiElement place,
                                           @NotNull PsiResolveHelper resolveHelper) {

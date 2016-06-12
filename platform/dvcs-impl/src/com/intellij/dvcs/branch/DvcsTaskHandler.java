@@ -19,7 +19,6 @@ import com.intellij.dvcs.repo.AbstractRepositoryManager;
 import com.intellij.dvcs.repo.Repository;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.text.StringUtil;
@@ -58,7 +57,7 @@ public abstract class DvcsTaskHandler<R extends Repository> extends VcsTaskHandl
     List<R> problems = ContainerUtil.filter(repositories, new Condition<R>() {
       @Override
       public boolean value(R repository) {
-        return hasBranch(repository, taskName);
+        return hasBranch(repository, new TaskInfo(taskName, Collections.emptyList()));
       }
     });
     List<R> map = new ArrayList<R>();
@@ -69,7 +68,7 @@ public abstract class DvcsTaskHandler<R extends Repository> extends VcsTaskHandl
                               StringUtil.join(problems, "<br>") + ".<br>" +
                               "Do you want to checkout existing " + myBranchType + "?", StringUtil.capitalize(myBranchType) + " Already Exists",
                               new String[]{Messages.YES_BUTTON, Messages.NO_BUTTON}, 0,
-                              Messages.getWarningIcon(), new DialogWrapper.PropertyDoNotAskOption("git.checkout.existing.branch")) == 0) {
+                              Messages.getWarningIcon()) == 0) {
         checkout(taskName, problems, null);
         map.addAll(problems);
       }
@@ -95,7 +94,7 @@ public abstract class DvcsTaskHandler<R extends Repository> extends VcsTaskHandl
     List<R> notFound = ContainerUtil.filter(repositories, new Condition<R>() {
       @Override
       public boolean value(R repository) {
-        return !hasBranch(repository, branchName);
+        return !hasBranch(repository, taskInfo);
       }
     });
     if (!notFound.isEmpty()) {
@@ -122,6 +121,7 @@ public abstract class DvcsTaskHandler<R extends Repository> extends VcsTaskHandl
     return myRepositoryManager.isSyncEnabled();
   }
 
+  @NotNull
   @Override
   public TaskInfo[] getCurrentTasks() {
     List<R> repositories = myRepositoryManager.getRepositories();
@@ -201,5 +201,5 @@ public abstract class DvcsTaskHandler<R extends Repository> extends VcsTaskHandl
 
   protected abstract void mergeAndClose(@NotNull String branch, @NotNull List<R> repositories);
 
-  protected abstract boolean hasBranch(@NotNull R repository, @NotNull String name);
+  protected abstract boolean hasBranch(@NotNull R repository, @NotNull TaskInfo name);
 }

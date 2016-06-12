@@ -53,7 +53,7 @@ import com.intellij.util.ReflectionUtil;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.MultiMap;
 import com.intellij.util.messages.MessageBusConnection;
-import com.intellij.util.pico.ConstructorInjectionComponentAdapter;
+import com.intellij.util.pico.CachingConstructorInjectionComponentAdapter;
 import com.intellij.util.ui.UIUtil;
 import gnu.trove.THashMap;
 import gnu.trove.THashSet;
@@ -666,7 +666,7 @@ public final class ActionManagerImpl extends ActionManagerEx implements Disposab
         group = new DefaultCompactActionGroup();
       } else {
         Class aClass = Class.forName(className, true, loader);
-        Object obj = new ConstructorInjectionComponentAdapter(className, aClass).getComponentInstance(ApplicationManager.getApplication().getPicoContainer());
+        Object obj = new CachingConstructorInjectionComponentAdapter(className, aClass).getComponentInstance(ApplicationManager.getApplication().getPicoContainer());
 
         if (!(obj instanceof ActionGroup)) {
           reportActionError(pluginId, "class with name \"" + className + "\" should be instance of " + ActionGroup.class.getName());
@@ -1072,12 +1072,7 @@ public final class ActionManagerImpl extends ActionManagerEx implements Disposab
 
   @Override
   public Comparator<String> getRegistrationOrderComparator() {
-    return new Comparator<String>() {
-      @Override
-      public int compare(String id1, String id2) {
-        return myId2Index.get(id1) - myId2Index.get(id2);
-      }
-    };
+    return (id1, id2) -> myId2Index.get(id1) - myId2Index.get(id2);
   }
 
   @NotNull
@@ -1275,12 +1270,7 @@ public final class ActionManagerImpl extends ActionManagerEx implements Disposab
     assert app.isDispatchThread();
 
     final ActionCallback result = new ActionCallback();
-    final Runnable doRunnable = new Runnable() {
-      @Override
-      public void run() {
-        tryToExecuteNow(action, inputEvent, contextComponent, place, result);
-      }
-    };
+    final Runnable doRunnable = () -> tryToExecuteNow(action, inputEvent, contextComponent, place, result);
 
     if (now) {
       doRunnable.run();

@@ -2,9 +2,13 @@ package com.jetbrains.jsonSchema;
 
 import com.intellij.openapi.components.PersistentStateComponent;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.io.FileUtil;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.ArrayUtil;
+import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.xmlb.XmlSerializerUtil;
 import com.intellij.util.xmlb.annotations.AbstractCollection;
 import com.intellij.util.xmlb.annotations.Tag;
@@ -18,13 +22,10 @@ import java.util.*;
  * @author Irina.Chernushina on 2/2/2016.
  */
 public class JsonSchemaMappingsConfigurationBase implements PersistentStateComponent<JsonSchemaMappingsConfigurationBase> {
-  private final static Comparator<Item> COMPARATOR = new Comparator<Item>() {
-    @Override
-    public int compare(Item o1, Item o2) {
-      if (o1.isPattern() != o2.isPattern()) return o1.isPattern() ? -1 : 1;
-      if (o1.isDirectory() != o2.isDirectory()) return o1.isDirectory() ? -1 : 1;
-      return o1.getPath().compareToIgnoreCase(o2.getPath());
-    }
+  private final static Comparator<Item> COMPARATOR = (o1, o2) -> {
+    if (o1.isPattern() != o2.isPattern()) return o1.isPattern() ? -1 : 1;
+    if (o1.isDirectory() != o2.isDirectory()) return o1.isDirectory() ? -1 : 1;
+    return o1.getPath().compareToIgnoreCase(o2.getPath());
   };
   @Tag("state") @AbstractCollection(surroundWithTag = false)
   protected final Map<String, SchemaInfo> myState = new TreeMap<String, SchemaInfo>();
@@ -129,7 +130,8 @@ public class JsonSchemaMappingsConfigurationBase implements PersistentStateCompo
     @Nullable
     public VirtualFile getSchemaFile(@NotNull final Project project) {
       final String pathToSchema = FileUtil.toSystemIndependentName(getRelativePathToSchema());
-      return VfsUtil.findRelativeFile(project.getBaseDir(), pathToSchema);
+      final List<String> strings = ContainerUtil.filter(pathToSchema.split("/"), s -> !StringUtil.isEmptyOrSpaces(s));
+      return VfsUtil.findRelativeFile(project.getBaseDir(), ArrayUtil.toStringArray(strings));
     }
 
     @Override

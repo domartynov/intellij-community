@@ -47,7 +47,6 @@ import com.intellij.openapi.fileEditor.impl.LoadTextUtil;
 import com.intellij.openapi.fileTypes.StdFileTypes;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.Computable;
@@ -57,7 +56,6 @@ import com.intellij.profile.codeInspection.InspectionProfileManager;
 import com.intellij.profile.codeInspection.InspectionProjectProfileManager;
 import com.intellij.psi.PsiElement;
 import com.intellij.util.PlatformUtils;
-import com.intellij.util.ui.tree.TreeUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -105,63 +103,49 @@ public class ViewOfflineResultsAction extends AnAction {
     final Map<String, Map<String, Set<OfflineProblemDescriptor>>> resMap =
       new HashMap<String, Map<String, Set<OfflineProblemDescriptor>>>();
     final String [] profileName = new String[1];
-    final Runnable process = new Runnable() {
-      @Override
-      public void run() {
-        final VirtualFile[] files = virtualFile.getChildren();
-        try {
-          for (final VirtualFile inspectionFile : files) {
-            if (inspectionFile.isDirectory()) continue;
-            final String shortName = inspectionFile.getNameWithoutExtension();
-            final String extension = inspectionFile.getExtension();
-            if (shortName.equals(InspectionApplication.DESCRIPTIONS)) {
-              profileName[0] = ApplicationManager.getApplication().runReadAction(
-                  new Computable<String>() {
-                    @Override
-                    @Nullable
-                    public String compute() {
-                      return OfflineViewParseUtil.parseProfileName(LoadTextUtil.loadText(inspectionFile).toString());
-                    }
+    final Runnable process = () -> {
+      final VirtualFile[] files = virtualFile.getChildren();
+      try {
+        for (final VirtualFile inspectionFile : files) {
+          if (inspectionFile.isDirectory()) continue;
+          final String shortName = inspectionFile.getNameWithoutExtension();
+          final String extension = inspectionFile.getExtension();
+          if (shortName.equals(InspectionApplication.DESCRIPTIONS)) {
+            profileName[0] = ApplicationManager.getApplication().runReadAction(
+                new Computable<String>() {
+                  @Override
+                  @Nullable
+                  public String compute() {
+                    return OfflineViewParseUtil.parseProfileName(LoadTextUtil.loadText(inspectionFile).toString());
                   }
-              );
-            }
-            else if (XML_EXTENSION.equals(extension)) {
-              resMap.put(shortName, ApplicationManager.getApplication().runReadAction(
-                  new Computable<Map<String, Set<OfflineProblemDescriptor>>>() {
-                    @Override
-                    public Map<String, Set<OfflineProblemDescriptor>> compute() {
-                      return OfflineViewParseUtil.parse(LoadTextUtil.loadText(inspectionFile).toString());
-                    }
+                }
+            );
+          }
+          else if (XML_EXTENSION.equals(extension)) {
+            resMap.put(shortName, ApplicationManager.getApplication().runReadAction(
+                new Computable<Map<String, Set<OfflineProblemDescriptor>>>() {
+                  @Override
+                  public Map<String, Set<OfflineProblemDescriptor>> compute() {
+                    return OfflineViewParseUtil.parse(LoadTextUtil.loadText(inspectionFile).toString());
                   }
-              ));
-            }
+                }
+            ));
           }
         }
-        catch (final Exception e) {  //all parse exceptions
-          SwingUtilities.invokeLater(new Runnable() {
-            @Override
-            public void run() {
-              Messages.showInfoMessage(e.getMessage(), InspectionsBundle.message("offline.view.parse.exception.title"));
-            }
-          });
-          throw new ProcessCanceledException(); //cancel process
-        }
+      }
+      catch (final Exception e) {  //all parse exceptions
+        SwingUtilities.invokeLater(
+          () -> Messages.showInfoMessage(e.getMessage(), InspectionsBundle.message("offline.view.parse.exception.title")));
+        throw new ProcessCanceledException(); //cancel process
       }
     };
-    ProgressManager.getInstance().runProcessWithProgressAsynchronously(project, InspectionsBundle.message("parsing.inspections.dump.progress.title"), process, new Runnable() {
-      @Override
-      public void run() {
-        SwingUtilities.invokeLater(new Runnable(){
-          @Override
-          public void run() {
-            final String name = profileName[0];
-            showOfflineView(project, name, resMap,
-                            InspectionsBundle.message("offline.view.title") +
-                            " (" + (name != null ? name : InspectionsBundle.message("offline.view.editor.settings.title")) +")");
-          }
-        });
-      }
-    }, null, new PerformAnalysisInBackgroundOption(project));
+    ProgressManager.getInstance().runProcessWithProgressAsynchronously(project, InspectionsBundle.message("parsing.inspections.dump.progress.title"), process,
+                                                                       () -> SwingUtilities.invokeLater(() -> {
+                                                                         final String name = profileName[0];
+                                                                         showOfflineView(project, name, resMap,
+                                                                                         InspectionsBundle.message("offline.view.title") +
+                                                                                         " (" + (name != null ? name : InspectionsBundle.message("offline.view.editor.settings.title")) +")");
+                                                                       }), null, new PerformAnalysisInBackgroundOption(project));
   }
 
   @SuppressWarnings({"WeakerAccess", "UnusedReturnValue"}) //used in TeamCity
@@ -195,17 +179,6 @@ public class ViewOfflineResultsAction extends AnAction {
         public HighlightDisplayLevel getErrorLevel(@NotNull final HighlightDisplayKey key, PsiElement element) {
           return ((InspectionProfile)InspectionProfileManager.getInstance().getRootProfile()).getErrorLevel(key, element);
         }
-
-        @Override
-        public boolean isEditable() {
-          return false;
-        }
-
-        @NotNull
-        @Override
-        public String getDisplayName() {
-          return getName();
-        }
       };
     }
     return showOfflineView(project, resMap, inspectionProfile, title);
@@ -225,9 +198,8 @@ public class ViewOfflineResultsAction extends AnAction {
     final InspectionResultsView view = new InspectionResultsView(context,
                                                                  new OfflineInspectionRVContentProvider(resMap, project));
     ((RefManagerImpl)context.getRefManager()).startOfflineView();
+    context.addView(view, title, true);
     view.update();
-    TreeUtil.selectFirstNode(view.getTree());
-    context.addView(view, title);
     return view;
   }
 }

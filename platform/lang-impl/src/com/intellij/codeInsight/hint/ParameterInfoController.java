@@ -16,7 +16,6 @@
 
 package com.intellij.codeInsight.hint;
 
-import com.intellij.codeInsight.AutoPopupController;
 import com.intellij.codeInsight.lookup.Lookup;
 import com.intellij.codeInsight.lookup.LookupManager;
 import com.intellij.ide.IdeTooltip;
@@ -260,7 +259,7 @@ public class ParameterInfoController implements Disposable {
   private void addAlarmRequest(){
     Runnable request = () -> {
       if (!myDisposed && !myProject.isDisposed()) {
-        AutoPopupController.runLaterWithEverythingCommitted(myProject, () ->
+        PsiDocumentManager.getInstance(myProject).performLaterWhenAllCommitted(() ->
           DumbService.getInstance(myProject).withAlternativeResolveEnabled(this::updateComponent)
         );
       }
@@ -289,7 +288,8 @@ public class ParameterInfoController implements Disposable {
         short position = tooltip != null
                          ? toShort(tooltip.getPreferredPosition())
                          : HintManager.UNDER;
-        Pair<Point, Short> pos = myProvider.getBestPointPosition(myHint, (PsiElement)elementForUpdating, offset, true, position);
+        Pair<Point, Short> pos = myProvider.getBestPointPosition(myHint, (PsiElement)elementForUpdating,
+                                                                 myEditor.getCaretModel().getOffset(), true, position);
         HintManagerImpl.adjustEditorHintPosition(myHint, myEditor, pos.getFirst(), pos.getSecond());
       }
     }

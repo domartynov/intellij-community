@@ -28,6 +28,7 @@ import com.intellij.openapi.externalSystem.service.project.ExternalSystemProject
 import com.intellij.openapi.externalSystem.util.ExternalSystemApiUtil;
 import com.intellij.openapi.externalSystem.util.ExternalSystemDebugEnvironment;
 import com.intellij.openapi.module.StdModuleTypes;
+import com.intellij.openapi.roots.DependencyScope;
 import com.intellij.openapi.util.Factory;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.KeyValue;
@@ -35,7 +36,6 @@ import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.ArrayUtil;
-import com.intellij.util.BooleanFunction;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.ContainerUtilRt;
@@ -81,6 +81,7 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
     Key.create("resolvedSourceSets");
   public static final Key<Map<String/* output path */, Pair<String /* module id*/, ExternalSystemSourceType>>> MODULES_OUTPUTS =
     Key.create("moduleOutputsMap");
+  public static final Key<Map<ExternalSystemSourceType, String /* output path*/>> GRADLE_OUTPUTS = Key.create("gradleOutputs");
   public static final Key<Map<String/* artifact path */, String /* module id*/>> CONFIGURATION_ARTIFACTS =
     Key.create("gradleArtifactsMap");
 
@@ -145,8 +146,11 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
 
     if(resolverCtx.isPreviewMode()){
       commandLineArgs.add("-Didea.isPreviewMode=true");
-      final Set<Class> previewLightWeightToolingModels = ContainerUtil.<Class>set(ExternalProjectPreview.class, GradleBuild.class);
+      final Set<Class> previewLightWeightToolingModels = ContainerUtil.set(ExternalProjectPreview.class, GradleBuild.class);
       projectImportAction.addExtraProjectModelClasses(previewLightWeightToolingModels);
+    }
+    if(resolverCtx.isResolveModulePerSourceSet()) {
+      commandLineArgs.add("-Didea.resolveSourceSetDependencies=true");
     }
 
     final GradleImportCustomizer importCustomizer = GradleImportCustomizer.get();
@@ -351,7 +355,9 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
       projectResolverChain.populateModuleExtraModels(ideaModule, moduleDataNode);
     }
     mergeSourceSetContentRoots(moduleMap, resolverCtx);
-    mergeLibraryAndModuleDependencyData(projectDataNode, gradleHomeDir, gradleVersion);
+    if(resolverCtx.isResolveModulePerSourceSet()) {
+      mergeLibraryAndModuleDependencyData(projectDataNode, gradleHomeDir, gradleVersion);
+    }
     projectDataNode.putUserData(RESOLVED_SOURCE_SETS, null);
     projectDataNode.putUserData(MODULES_OUTPUTS, null);
     projectDataNode.putUserData(CONFIGURATION_ARTIFACTS, null);
@@ -421,17 +427,23 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
         final ModuleData moduleData = pair.first.getData();
         if (targetModuleOutputPaths == null) {
           final Set<String> compileSet = ContainerUtil.newHashSet();
-          ContainerUtil.addAllNotNull(compileSet,
-                                      moduleData.getCompileOutputPath(ExternalSystemSourceType.SOURCE),
-                                      moduleData.getCompileOutputPath(ExternalSystemSourceType.RESOURCE));
+          Map<ExternalSystemSourceType, String> gradleOutputs = pair.first.getUserData(GRADLE_OUTPUTS);
+          if(gradleOutputs != null) {
+            ContainerUtil.addAllNotNull(compileSet,
+                                        gradleOutputs.get(ExternalSystemSourceType.SOURCE),
+                                        gradleOutputs.get(ExternalSystemSourceType.RESOURCE));
+          }
           if (!compileSet.isEmpty() && ContainerUtil.intersects(libraryPaths, compileSet)) {
             targetModuleOutputPaths = compileSet;
           }
           else {
             final Set<String> testSet = ContainerUtil.newHashSet();
-            ContainerUtil.addAllNotNull(testSet,
-                                        moduleData.getCompileOutputPath(ExternalSystemSourceType.TEST),
-                                        moduleData.getCompileOutputPath(ExternalSystemSourceType.TEST_RESOURCE));
+            Map<ExternalSystemSourceType, String> gradleTestOutputs = pair.first.getUserData(GRADLE_OUTPUTS);
+            if(gradleTestOutputs != null) {
+              ContainerUtil.addAllNotNull(compileSet,
+                                          gradleTestOutputs.get(ExternalSystemSourceType.TEST),
+                                          gradleTestOutputs.get(ExternalSystemSourceType.TEST_RESOURCE));
+            }
             if (compileSet.isEmpty() && ContainerUtil.intersects(libraryPaths, testSet)) {
               targetModuleOutputPaths = testSet;
             }
@@ -445,14 +457,21 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
           moduleDependencyData.setProductionOnTestDependency(true);
         }
         final DataNode<ModuleDependencyData> found = ExternalSystemApiUtil.find(
-          libraryNodeParent, ProjectKeys.MODULE_DEPENDENCY, new BooleanFunction<DataNode<ModuleDependencyData>>() {
-            @Override
-            public boolean fun(DataNode<ModuleDependencyData> node) {
-              if (moduleDependencyData.getInternalName().equals(node.getData().getInternalName())) {
-                moduleDependencyData.setModuleDependencyArtifacts(node.getData().getModuleDependencyArtifacts());
-              }
-              return moduleDependencyData.equals(node.getData());
+          libraryNodeParent, ProjectKeys.MODULE_DEPENDENCY, node -> {
+            if (moduleDependencyData.getInternalName().equals(node.getData().getInternalName())) {
+              moduleDependencyData.setModuleDependencyArtifacts(node.getData().getModuleDependencyArtifacts());
             }
+
+            final boolean result;
+            // ignore provided scope during the search since it can be resolved incorrectly for file dependencies on a source set outputs
+            if(moduleDependencyData.getScope() == DependencyScope.PROVIDED) {
+              moduleDependencyData.setScope(node.getData().getScope());
+              result = moduleDependencyData.equals(node.getData());
+              moduleDependencyData.setScope(DependencyScope.PROVIDED);
+            } else {
+              result = moduleDependencyData.equals(node.getData());
+            }
+            return result;
           });
 
         if (targetModuleOutputPaths != null) {
@@ -515,8 +534,8 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
   }
 
   private static Map<String, ExternalProject> extractExternalProjectModels(ProjectImportAction.AllModels models, boolean isPreview) {
-    final ExternalProject externalRootProject =
-      isPreview ? models.getExtraProject(null, ExternalProjectPreview.class) : models.getExtraProject(null, ExternalProject.class);
+    final Class<? extends ExternalProject> modelClazz = isPreview ? ExternalProjectPreview.class : ExternalProject.class;
+    final ExternalProject externalRootProject =   models.getExtraProject(null, modelClazz);
     if (externalRootProject == null) return Collections.emptyMap();
 
     final DefaultExternalProject wrappedExternalRootProject = new DefaultExternalProject(externalRootProject);
@@ -556,21 +575,21 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
     return externalProjectMap;
   }
 
+  private static class Counter {
+    int count;
+    void increment() {
+      count++;
+    }
+
+    @Override
+    public String toString() {
+      return String.valueOf(count);
+    }
+  }
+
   private static void mergeSourceSetContentRoots(@NotNull Map<String, Pair<DataNode<ModuleData>, IdeaModule>> moduleMap,
                                                  @NotNull ProjectResolverContext resolverCtx) {
-    class Counter {
-      int count;
-
-      void increment() {
-        count++;
-      }
-    }
-    final Factory<Counter> counterFactory = new Factory<Counter>() {
-      @Override
-      public Counter create() {
-        return new Counter();
-      }
-    };
+    final Factory<Counter> counterFactory = () -> new Counter();
 
     final Map<String, Counter> weightMap = ContainerUtil.newHashMap();
     for (final Pair<DataNode<ModuleData>, IdeaModule> pair : moduleMap.values()) {
@@ -601,69 +620,88 @@ public class GradleProjectResolver implements ExternalSystemProjectResolver<Grad
       final DataNode<ModuleData> moduleNode = pair.first;
       final ExternalProject externalProject = resolverCtx.getExtraProject(pair.second, ExternalProject.class);
       if (externalProject == null) continue;
-      final File buildDir = externalProject.getBuildDir();
 
-      for (DataNode<GradleSourceSetData> sourceSetNode : ExternalSystemApiUtil.findAll(moduleNode, GradleSourceSetData.KEY)) {
-        final MultiMap<String, ContentRootData> sourceSetRoots = MultiMap.create();
-        for (DataNode<ContentRootData> contentRootNode : ExternalSystemApiUtil.findAll(sourceSetNode, ProjectKeys.CONTENT_ROOT)) {
-          File root = new File(contentRootNode.getData().getRootPath());
-          if (FileUtil.isAncestor(buildDir, root, true)) continue;
-
-          while (weightMap.containsKey(root.getParent()) && weightMap.get(root.getParent()).count <= 1) {
-            root = root.getParentFile();
-          }
-          final Collection<ContentRootData> mergedContentRoots = sourceSetRoots.get(root.getPath());
-          final ContentRootData mergedContentRoot;
-          if (mergedContentRoots.isEmpty()) {
-            mergedContentRoot = new ContentRootData(GradleConstants.SYSTEM_ID, root.getAbsolutePath());
-            sourceSetRoots.putValue(mergedContentRoot.getRootPath(), mergedContentRoot);
-          } else {
-            mergedContentRoot = mergedContentRoots.iterator().next();
-          }
-
-          for (ExternalSystemSourceType sourceType : ExternalSystemSourceType.values()) {
-            for (ContentRootData.SourceRoot sourceRoot : contentRootNode.getData().getPaths(sourceType)) {
-              mergedContentRoot.storePath(sourceType, sourceRoot.getPath(), sourceRoot.getPackagePrefix());
-            }
-          }
-
-          final String rootPath = mergedContentRoot.getRootPath();
-          for (String path : sourceSetRoots.keySet()) {
-            if (FileUtil.isAncestor(rootPath, path, true)) {
-              Collection<ContentRootData> values = sourceSetRoots.remove(path);
-              if (values != null) {
-                sourceSetRoots.putValues(rootPath, values);
-              }
-              break;
-            }
-            else if (FileUtil.isAncestor(path, rootPath, true)) {
-              Collection<ContentRootData> values = sourceSetRoots.remove(rootPath);
-              if (values != null) {
-                sourceSetRoots.putValues(path, values);
-              }
-              break;
-            }
-          }
-
-          contentRootNode.clear(true);
-        }
-
-        for (Map.Entry<String, Collection<ContentRootData>> entry : sourceSetRoots.entrySet()) {
-          final String rootPath = entry.getKey();
-          final ContentRootData ideContentRoot = new ContentRootData(GradleConstants.SYSTEM_ID, rootPath);
-
-          for (ContentRootData rootData : entry.getValue()) {
-            for (ExternalSystemSourceType sourceType : ExternalSystemSourceType.values()) {
-              Collection<ContentRootData.SourceRoot> roots = rootData.getPaths(sourceType);
-              for (ContentRootData.SourceRoot sourceRoot : roots) {
-                ideContentRoot.storePath(sourceType, sourceRoot.getPath(), sourceRoot.getPackagePrefix());
-              }
-            }
-          }
-
-          sourceSetNode.createChild(ProjectKeys.CONTENT_ROOT, ideContentRoot);
+      if (resolverCtx.isResolveModulePerSourceSet()) {
+        for (DataNode<GradleSourceSetData> sourceSetNode : ExternalSystemApiUtil.findAll(moduleNode, GradleSourceSetData.KEY)) {
+          mergeModuleContentRoots(weightMap, externalProject, sourceSetNode);
         }
       }
+      else {
+        mergeModuleContentRoots(weightMap, externalProject, moduleNode);
+      }
+    }
+  }
+
+  private static void mergeModuleContentRoots(@NotNull Map<String, Counter> weightMap,
+                                              @NotNull ExternalProject externalProject,
+                                              @NotNull DataNode<? extends ModuleData> moduleNode) {
+    final File buildDir = externalProject.getBuildDir();
+    final MultiMap<String, ContentRootData> sourceSetRoots = MultiMap.create();
+    Collection<DataNode<ContentRootData>> contentRootNodes = ExternalSystemApiUtil.findAll(moduleNode, ProjectKeys.CONTENT_ROOT);
+    if(contentRootNodes.size() <= 1) return;
+
+    for (DataNode<ContentRootData> contentRootNode : contentRootNodes) {
+      File root = new File(contentRootNode.getData().getRootPath());
+      if (FileUtil.isAncestor(buildDir, root, true)) continue;
+
+      while (weightMap.containsKey(root.getParent()) && weightMap.get(root.getParent()).count <= 1) {
+        root = root.getParentFile();
+      }
+
+      ContentRootData mergedContentRoot = null;
+      String rootPath = ExternalSystemApiUtil.toCanonicalPath(root.getAbsolutePath());
+      Set<String> paths = ContainerUtil.newHashSet(sourceSetRoots.keySet());
+      for (String path : paths) {
+        if (FileUtil.isAncestor(rootPath, path, true)) {
+          Collection<ContentRootData> values = sourceSetRoots.remove(path);
+          if (values != null) {
+            sourceSetRoots.putValues(rootPath, values);
+          }
+        }
+        else if (FileUtil.isAncestor(path, rootPath, false)) {
+          Collection<ContentRootData> contentRoots = sourceSetRoots.get(path);
+          for (ContentRootData rootData : contentRoots) {
+            if (StringUtil.equals(rootData.getRootPath(), path)) {
+              mergedContentRoot = rootData;
+              break;
+            }
+          }
+          if (mergedContentRoot == null) {
+            mergedContentRoot = contentRoots.iterator().next();
+          }
+          break;
+        }
+        if(sourceSetRoots.size() == 1) break;
+      }
+
+      if (mergedContentRoot == null) {
+        mergedContentRoot = new ContentRootData(GradleConstants.SYSTEM_ID, root.getAbsolutePath());
+        sourceSetRoots.putValue(mergedContentRoot.getRootPath(), mergedContentRoot);
+      }
+
+      for (ExternalSystemSourceType sourceType : ExternalSystemSourceType.values()) {
+        for (ContentRootData.SourceRoot sourceRoot : contentRootNode.getData().getPaths(sourceType)) {
+          mergedContentRoot.storePath(sourceType, sourceRoot.getPath(), sourceRoot.getPackagePrefix());
+        }
+      }
+
+      contentRootNode.clear(true);
+    }
+
+    for (Map.Entry<String, Collection<ContentRootData>> entry : sourceSetRoots.entrySet()) {
+      final String rootPath = entry.getKey();
+      final ContentRootData ideContentRoot = new ContentRootData(GradleConstants.SYSTEM_ID, rootPath);
+
+      for (ContentRootData rootData : entry.getValue()) {
+        for (ExternalSystemSourceType sourceType : ExternalSystemSourceType.values()) {
+          Collection<ContentRootData.SourceRoot> roots = rootData.getPaths(sourceType);
+          for (ContentRootData.SourceRoot sourceRoot : roots) {
+            ideContentRoot.storePath(sourceType, sourceRoot.getPath(), sourceRoot.getPackagePrefix());
+          }
+        }
+      }
+
+      moduleNode.createChild(ProjectKeys.CONTENT_ROOT, ideContentRoot);
     }
   }
 

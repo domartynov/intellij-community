@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 package com.intellij.application.options.codeStyle;
 
 import com.intellij.openapi.application.ApplicationBundle;
-import com.intellij.psi.codeStyle.*;
+import com.intellij.psi.codeStyle.CodeStyleSettings;
+import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
+import com.intellij.psi.codeStyle.CustomCodeStyleSettings;
 import com.intellij.ui.SpeedSearchComparator;
 import com.intellij.ui.TreeTableSpeedSearch;
 import com.intellij.ui.components.JBCheckBox;
@@ -29,12 +31,16 @@ import com.intellij.ui.treeStructure.treetable.TreeTableModel;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.AbstractTableCellEditor;
 import com.intellij.util.ui.ColumnInfo;
+import com.intellij.util.ui.JBUI;
 import com.intellij.util.ui.UIUtil;
 import gnu.trove.THashMap;
 import gnu.trove.THashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import javax.accessibility.AccessibleAction;
+import javax.accessibility.AccessibleContext;
+import javax.accessibility.AccessibleRole;
 import javax.swing.*;
 import javax.swing.table.TableCellEditor;
 import javax.swing.table.TableCellRenderer;
@@ -83,12 +89,12 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
     };
     myPanel.add(scrollPane
       , new GridBagConstraints(0, 0, 1, 1, 0, 1, GridBagConstraints.CENTER, GridBagConstraints.BOTH,
-                                       new Insets(0, 0, 0, 0), 0, 0));
+                               JBUI.emptyInsets(), 0, 0));
 
     final JPanel previewPanel = createPreviewPanel();
     myPanel.add(previewPanel,
                 new GridBagConstraints(1, 0, 1, 1, 1, 1, GridBagConstraints.CENTER, GridBagConstraints.BOTH,
-                                       new Insets(0, 0, 0, 0), 0, 0));
+                                       JBUI.emptyInsets(), 0, 0));
 
     installPreviewPanel(previewPanel);
     addPanelToWatch(myPanel);
@@ -680,7 +686,10 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
   }
 
   private static class MyValueRenderer implements TableCellRenderer {
-    private final JLabel myComboBox = new JLabel();
+    private JTable myTable;
+    private int myRow;
+    private int myColumn;
+    private final OptionsLabel myComboBox = new OptionsLabel();
     private final JCheckBox myCheckBox = new JBCheckBox();
     private final JPanel myEmptyLabel = new JPanel();
     private final JLabel myIntLabel = new JLabel();
@@ -693,6 +702,9 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
                                                    boolean hasFocus,
                                                    int row,
                                                    int column) {
+      myTable = table;
+      myRow = row;
+      myColumn = column;
       boolean isEnabled = true;
       final DefaultMutableTreeNode node = (DefaultMutableTreeNode)((TreeTable)table).getTree().
         getPathForRow(row).getLastPathComponent();
@@ -737,6 +749,52 @@ public abstract class OptionTableWithPreviewPanel extends CustomizableLanguageCo
 
       myEmptyLabel.setBackground(background);
       return myEmptyLabel;
+    }
+
+    protected class OptionsLabel extends JLabel {
+      @Override
+      public AccessibleContext getAccessibleContext() {
+        if (accessibleContext == null) {
+          accessibleContext = new AccessibleOptionsLabel();
+        }
+        return accessibleContext;
+      }
+
+      protected class AccessibleOptionsLabel extends AccessibleJLabel implements AccessibleAction {
+        @Override
+        public AccessibleRole getAccessibleRole() {
+          return AccessibleRole.PUSH_BUTTON;
+        }
+
+        @Override
+        public AccessibleAction getAccessibleAction() {
+          return this;
+        }
+
+        @Override
+        public int getAccessibleActionCount() {
+          return 1;
+        }
+
+        @Override
+        public String getAccessibleActionDescription(int i) {
+          if (i == 0) {
+            return UIManager.getString("AbstractButton.clickText");
+          } else {
+            return null;
+          }
+        }
+
+        @Override
+        public boolean doAccessibleAction(int i) {
+          if (i == 0) {
+            myTable.editCellAt(myRow, myColumn);
+            return true;
+          } else {
+            return false;
+          }
+        }
+      }
     }
   }
 

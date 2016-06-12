@@ -25,7 +25,6 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.colors.EditorColorsScheme;
-import com.intellij.openapi.editor.ex.EditorEx;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.progress.Task;
@@ -37,7 +36,6 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.IdeFocusManager;
-import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.ui.JBSplitter;
 import com.intellij.util.TimeoutUtil;
 import com.intellij.util.ui.UIUtil;
@@ -75,7 +73,7 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
   private XStandaloneVariablesView mySplitView;
 
   public PythonConsoleView(final Project project, final String title, final Sdk sdk) {
-    super(new MyHelper(project, title, PythonLanguage.getInstance()));
+    super(project, title, PythonLanguage.getInstance());
 
     getVirtualFile().putUserData(LanguageLevel.KEY, PythonSdkType.getLanguageLevelForSdk(sdk));
     // Mark editor as console one, to prevent autopopup completion
@@ -104,37 +102,28 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
 
   @Override
   public void executeCode(final @NotNull String code, @Nullable final Editor editor) {
-    showConsole(new Runnable() {
+    showConsole(() -> ProgressManager.getInstance().run(new Task.Backgroundable(null, "Executing Code in Console...", false) {
       @Override
-      public void run() {
-        ProgressManager.getInstance().run(new Task.Backgroundable(null, "Executing Code in Console...", false) {
-          @Override
-          public void run(@NotNull final ProgressIndicator indicator) {
-            long time = System.currentTimeMillis();
-            while (!myExecuteActionHandler.isEnabled() || !myExecuteActionHandler.canExecuteNow()) {
-              if (indicator.isCanceled()) {
-                break;
-              }
-              if (System.currentTimeMillis() - time > 1000) {
-                if (editor != null) {
-                  UIUtil.invokeLaterIfNeeded(new Runnable() {
-                    @Override
-                    public void run() {
-                      HintManager.getInstance().showErrorHint(editor, myExecuteActionHandler.getCantExecuteMessage());
-                    }
-                  });
-                }
-                return;
-              }
-              TimeoutUtil.sleep(300);
-            }
-            if (!indicator.isCanceled()) {
-              doExecute(code);
-            }
+      public void run(@NotNull final ProgressIndicator indicator) {
+        long time = System.currentTimeMillis();
+        while (!myExecuteActionHandler.isEnabled() || !myExecuteActionHandler.canExecuteNow()) {
+          if (indicator.isCanceled()) {
+            break;
           }
-        });
+          if (System.currentTimeMillis() - time > 1000) {
+            if (editor != null) {
+              UIUtil.invokeLaterIfNeeded(
+                () -> HintManager.getInstance().showErrorHint(editor, myExecuteActionHandler.getCantExecuteMessage()));
+            }
+            return;
+          }
+          TimeoutUtil.sleep(300);
+        }
+        if (!indicator.isCanceled()) {
+          doExecute(code);
+        }
       }
-    });
+    }));
   }
 
   private void showConsole(@NotNull Runnable runnable) {
@@ -154,17 +143,14 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
   }
 
   public void executeInConsole(final String code) {
-    UIUtil.invokeLaterIfNeeded(new Runnable() {
-      @Override
-      public void run() {
-        String text = getConsoleEditor().getDocument().getText();
+    UIUtil.invokeLaterIfNeeded(() -> {
+      String text = getConsoleEditor().getDocument().getText();
 
-        setInputText(code);
-        myExecuteActionHandler.runExecuteAction(PythonConsoleView.this);
+      setInputText(code);
+      myExecuteActionHandler.runExecuteAction(PythonConsoleView.this);
 
-        if (!StringUtil.isEmpty(text)) {
-          setInputText(text);
-        }
+      if (!StringUtil.isEmpty(text)) {
+        setInputText(text);
       }
     });
   }
@@ -310,17 +296,5 @@ public class PythonConsoleView extends LanguageConsoleImpl implements Observable
     add(pane.getFirstComponent(), BorderLayout.CENTER);
     validate();
     repaint();
-  }
-
-  private static class MyHelper extends Helper {
-    public MyHelper(@NotNull Project project, String title, PythonLanguage language) {
-      super(project, new LightVirtualFile(title, language, ""));
-    }
-
-    @Override
-    public void setupEditor(@NotNull EditorEx editor) {
-      super.setupEditor(editor);
-      editor.setHorizontalScrollbarVisible(false);
-    }
   }
 }

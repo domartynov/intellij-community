@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,33 +15,15 @@
  */
 package com.intellij.psi.stubsHierarchy.impl;
 
-import com.intellij.psi.PsiClass;
+public class ClassAnchor {
+  final int myFileId;
+  final int myStubId;
 
-public abstract class ClassAnchor {
-  public final int myFileId;
+  public static final ClassAnchor[] EMPTY_ARRAY = new ClassAnchor[0];
 
-  public final static ClassAnchor[] EMPTY_ARRAY = new ClassAnchor[0];
-
-  protected ClassAnchor(int fileId) {
+  ClassAnchor(int fileId, int stubId) {
     myFileId = fileId;
-  }
-
-  public static class StubClassAnchor extends ClassAnchor {
-    public final int myStubId;
-
-    public StubClassAnchor(int fileId, int stubId) {
-      super(fileId);
-      this.myStubId = stubId;
-    }
-  }
-
-  public static class DirectClassAnchor extends ClassAnchor {
-    public final PsiClass myPsiClass;
-
-    public DirectClassAnchor(int fileId, PsiClass psiClass) {
-      super(fileId);
-      myPsiClass = psiClass;
-    }
+    myStubId = stubId;
   }
 
 }

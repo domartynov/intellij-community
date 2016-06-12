@@ -34,7 +34,6 @@ import com.intellij.psi.PsiClass;
 import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiMethod;
 import com.intellij.util.ArrayUtil;
-import com.intellij.util.Function;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.plugins.gradle.service.execution.GradleExternalTaskConfigurationType;
 import org.jetbrains.plugins.gradle.util.GradleConstants;
@@ -177,12 +176,7 @@ public class TestClassGradleConfigurationProducer extends GradleTestRunConfigura
     }
 
     configuration.getSettings().setScriptParameters(buf.toString());
-    configuration.setName(StringUtil.join(containingClasses, new Function<PsiClass, String>() {
-      @Override
-      public String fun(PsiClass aClass) {
-        return aClass.getName();
-      }
-    },"|"));
+    configuration.setName(StringUtil.join(containingClasses, aClass -> aClass.getName(), "|"));
     return true;
   }
 }

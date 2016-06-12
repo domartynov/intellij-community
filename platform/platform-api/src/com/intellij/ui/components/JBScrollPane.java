@@ -15,6 +15,7 @@
  */
 package com.intellij.ui.components;
 
+import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.Key;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.registry.Registry;
@@ -37,9 +38,14 @@ import javax.swing.plaf.ScrollBarUI;
 import javax.swing.plaf.ScrollPaneUI;
 import javax.swing.plaf.UIResource;
 import javax.swing.plaf.basic.BasicScrollBarUI;
+import javax.swing.plaf.basic.BasicScrollPaneUI;
 import java.awt.*;
+import java.awt.event.InputEvent;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
 import java.awt.image.*;
+import java.lang.reflect.Field;
 
 public class JBScrollPane extends JScrollPane {
   /**
@@ -66,9 +72,13 @@ public class JBScrollPane extends JScrollPane {
 
   @Deprecated
   public static final RegionPainter<Float> MAC_THUMB_PAINTER = new RoundThumbPainter(2, .2f, .3f, Gray.x00);
+  static final RegionPainter<Float> MAC_OVERLAY_THUMB_PAINTER = new RoundThumbPainter(2, 0f, .5f, Gray.x00);
 
   @Deprecated
   public static final RegionPainter<Float> MAC_THUMB_DARK_PAINTER = new RoundThumbPainter(2, .10f, .05f, Gray.xFF);
+  static final RegionPainter<Float> MAC_OVERLAY_THUMB_DARK_PAINTER = new RoundThumbPainter(2, 0f, .15f, Gray.xFF);
+
+  private static final Logger LOG = Logger.getInstance(JBScrollPane.class);
 
   private int myViewportBorderWidth = -1;
   private boolean myHasOverlayScrollbars;
@@ -166,6 +176,35 @@ public class JBScrollPane extends JScrollPane {
   public void setUI(ScrollPaneUI ui) {
     super.setUI(ui);
     updateViewportBorder();
+    if (ui instanceof BasicScrollPaneUI) {
+      try {
+        Field field = BasicScrollPaneUI.class.getDeclaredField("mouseScrollListener");
+        field.setAccessible(true);
+        Object value = field.get(ui);
+        if (value instanceof MouseWheelListener) {
+          MouseWheelListener oldListener = (MouseWheelListener)value;
+          MouseWheelListener newListener = event -> {
+            if (isScrollEvent(event)) {
+              Object source = event.getSource();
+              if (source instanceof JScrollPane) {
+                JScrollPane pane = (JScrollPane)source;
+                if (pane.isWheelScrollingEnabled()) {
+                  JScrollBar bar = event.isShiftDown() ? pane.getHorizontalScrollBar() : pane.getVerticalScrollBar();
+                  if (bar != null && bar.isVisible()) oldListener.mouseWheelMoved(event);
+                }
+              }
+            }
+          };
+          field.set(ui, newListener);
+          // replace listener if field updated successfully
+          removeMouseWheelListener(oldListener);
+          addMouseWheelListener(newListener);
+        }
+      }
+      catch (Exception exception) {
+        LOG.warn(exception);
+      }
+    }
   }
 
   @Override
@@ -352,6 +391,12 @@ public class JBScrollPane extends JScrollPane {
           return true;
         }
       }
+      else if (ui instanceof DefaultScrollBarUI) {
+        DefaultScrollBarUI dui = (DefaultScrollBarUI)ui;
+        Point point = e.getLocationOnScreen();
+        SwingUtilities.convertPointFromScreen(point, bar);
+        return !dui.isThumbContains(point.x, point.y);
+      }
     }
     return true;
   }
@@ -361,14 +406,17 @@ public class JBScrollPane extends JScrollPane {
 
     public Corner(String pos) {
       myPos = pos;
+      ScrollColorProducer.setBackground(this);
+      ScrollColorProducer.setForeground(this);
     }
 
     @Override
     protected void paintComponent(Graphics g) {
-      g.setColor(ButtonlessScrollBarUI.getTrackBackgroundDefault());
+      g.setColor(getBackground());
       g.fillRect(0, 0, getWidth(), getHeight());
 
-      g.setColor(ButtonlessScrollBarUI.getTrackBorderColorDefault());
+      if (SystemInfo.isMac || !Registry.is("ide.scroll.track.border.paint")) return;
+      g.setColor(getForeground());
 
       int x2 = getWidth() - 1;
       int y2 = getHeight() - 1;
@@ -446,6 +494,19 @@ public class JBScrollPane extends JScrollPane {
             return ltr ? LEFT : RIGHT;
           }
         }
+        // assume alignment for a scroll bar,
+        // which is not contained in a scroll pane
+        if (component instanceof JScrollBar) {
+          JScrollBar bar = (JScrollBar)component;
+          switch (bar.getOrientation()) {
+            case Adjustable.HORIZONTAL:
+              return BOTTOM;
+            case Adjustable.VERTICAL:
+              return bar.getComponentOrientation().isLeftToRight()
+                     ? RIGHT
+                     : LEFT;
+          }
+        }
       }
       return null;
     }
@@ -512,6 +573,7 @@ public class JBScrollPane extends JScrollPane {
       boolean isEmpty = bounds.width < 0 || bounds.height < 0;
       Component view = viewport == null ? null : viewport.getView();
       Dimension viewPreferredSize = view == null ? new Dimension() : view.getPreferredSize();
+      if (view instanceof JComponent) JBViewport.fixPreferredSize(viewPreferredSize, (JComponent)view, vsb, hsb);
       Dimension viewportExtentSize = viewport == null ? new Dimension() : viewport.toViewCoordinates(bounds.getSize());
       // If the view is tracking the viewports width we don't bother with a horizontal scrollbar.
       // If the view is tracking the viewports height we don't bother with a vertical scrollbar.
@@ -928,5 +990,18 @@ public class JBScrollPane extends JScrollPane {
     @Override
     public void dispose() {
     }
+  }
+
+  /**
+   * Indicates whether the specified event is not consumed and does not have unexpected modifiers.
+   *
+   * @param event a mouse wheel event to check for validity
+   * @return {@code true} if the specified event is valid, {@code false} otherwise
+   */
+  public static boolean isScrollEvent(@NotNull MouseWheelEvent event) {
+    if (event.isConsumed()) return false; // event should not be consumed already
+    if (event.getWheelRotation() == 0) return false; // any rotation expected (forward or backward)
+    int modifiers = ~InputEvent.SHIFT_MASK & ~InputEvent.SHIFT_DOWN_MASK & event.getModifiers();
+    return modifiers == 0; // no modifiers expected except SHIFT for horizontal scrolling
   }
 }

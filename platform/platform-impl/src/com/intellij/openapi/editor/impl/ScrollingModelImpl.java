@@ -37,6 +37,7 @@ import com.intellij.openapi.editor.event.VisibleAreaEvent;
 import com.intellij.openapi.editor.event.VisibleAreaListener;
 import com.intellij.openapi.editor.ex.ScrollingModelEx;
 import com.intellij.openapi.editor.ex.util.EditorUtil;
+import com.intellij.openapi.fileEditor.impl.text.AsyncEditorLoader;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.ui.Animator;
@@ -58,41 +59,44 @@ public class ScrollingModelImpl implements ScrollingModelEx {
 
   private AnimatedScrollingRunnable myCurrentAnimationRequest = null;
   private boolean myAnimationDisabled = false;
-  private final DocumentAdapter myDocumentListener;
+
   private int myAccumulatedXOffset = -1;
   private int myAccumulatedYOffset = -1;
   private boolean myAccumulateViewportChanges;
   private boolean myViewportPositioned;
 
-  public ScrollingModelImpl(EditorImpl editor) {
-    myEditor = editor;
-
-    myEditor.getScrollPane().getViewport().addChangeListener(new ChangeListener() {
-      private Rectangle myLastViewRect;
-
-      @Override
-      public void stateChanged(ChangeEvent event) {
-        Rectangle viewRect = getVisibleArea();
-        VisibleAreaEvent visibleAreaEvent = new VisibleAreaEvent(myEditor, myLastViewRect, viewRect);
-        if (!myViewportPositioned && viewRect.height > 0) {
-          myViewportPositioned = true;
-          if (adjustVerticalOffsetIfNecessary()) {
-            return;
-          }
-        }
-        myLastViewRect = viewRect;
-        for (VisibleAreaListener listener : myVisibleAreaListeners) {
-          listener.visibleAreaChanged(visibleAreaEvent);
-        }
-      }
-    });
-
-    myDocumentListener = new DocumentAdapter() {
-      @Override
-      public void beforeDocumentChange(DocumentEvent e) {
+  private final DocumentAdapter myDocumentListener = new DocumentAdapter() {
+    @Override
+    public void beforeDocumentChange(DocumentEvent e) {
+      if (!myEditor.getDocument().isInBulkUpdate()) {
         cancelAnimatedScrolling(true);
       }
-    };
+    }
+  };
+
+  private final ChangeListener myViewportChangeListener = new ChangeListener() {
+    private Rectangle myLastViewRect;
+
+    @Override
+    public void stateChanged(ChangeEvent event) {
+      Rectangle viewRect = getVisibleArea();
+      VisibleAreaEvent visibleAreaEvent = new VisibleAreaEvent(myEditor, myLastViewRect, viewRect);
+      if (!myViewportPositioned && viewRect.height > 0) {
+        myViewportPositioned = true;
+        if (adjustVerticalOffsetIfNecessary()) {
+          return;
+        }
+      }
+      myLastViewRect = viewRect;
+      for (VisibleAreaListener listener : myVisibleAreaListeners) {
+        listener.visibleAreaChanged(visibleAreaEvent);
+      }
+    }
+  };
+
+  public ScrollingModelImpl(EditorImpl editor) {
+    myEditor = editor;
+    myEditor.getScrollPane().getViewport().addChangeListener(myViewportChangeListener);
     myEditor.getDocument().addDocumentListener(myDocumentListener);
   }
 
@@ -138,8 +142,7 @@ public class ScrollingModelImpl implements ScrollingModelEx {
     assertIsDispatchThread();
     myEditor.validateSize();
     if (myEditor.myUseNewRendering) {
-      VisualPosition caretPosition = myEditor.getCaretModel().getVisualPosition();
-      scrollTo(caretPosition, scrollType);
+      AsyncEditorLoader.performWhenLoaded(myEditor, () -> scrollTo(myEditor.getCaretModel().getVisualPosition(), scrollType));
     }
     else {
       LogicalPosition caretPosition = myEditor.getCaretModel().getLogicalPosition();
@@ -163,8 +166,7 @@ public class ScrollingModelImpl implements ScrollingModelEx {
   public void scrollTo(@NotNull LogicalPosition pos, @NotNull ScrollType scrollType) {
     assertIsDispatchThread();
 
-    Point targetLocation = myEditor.logicalPositionToXY(pos);
-    scrollTo(targetLocation, scrollType);
+    AsyncEditorLoader.performWhenLoaded(myEditor, () -> scrollTo(myEditor.logicalPositionToXY(pos), scrollType));
   }
 
   private static void assertIsDispatchThread() {
@@ -405,6 +407,7 @@ public class ScrollingModelImpl implements ScrollingModelEx {
 
   public void dispose() {
     myEditor.getDocument().removeDocumentListener(myDocumentListener);
+    myEditor.getScrollPane().getViewport().removeChangeListener(myViewportChangeListener);
   }
 
   public void beforeModalityStateChanged() {
@@ -428,6 +431,10 @@ public class ScrollingModelImpl implements ScrollingModelEx {
       myAccumulatedXOffset = myAccumulatedYOffset = -1;
       cancelAnimatedScrolling(true);
     }
+  }
+
+  void onBulkDocumentUpdateStarted() {
+    cancelAnimatedScrolling(true);
   }
 
   private class AnimatedScrollingRunnable {

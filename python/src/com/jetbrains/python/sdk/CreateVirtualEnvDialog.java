@@ -72,8 +72,7 @@ public class CreateVirtualEnvDialog extends AbstractCreateVirtualEnvDialog {
     });
     List<Sdk> sortedSdks = new ArrayList<Sdk>(allSdks);
     Collections.sort(sortedSdks, new PreferredSdkComparator());
-    updateSdkList(allSdks, sortedSdks.get(0));
-
+    updateSdkList(allSdks, sortedSdks.isEmpty() ? null : sortedSdks.get(0));
   }
 
   protected void layoutPanel(final List<Sdk> allSdks) {
@@ -149,16 +148,13 @@ public class CreateVirtualEnvDialog extends AbstractCreateVirtualEnvDialog {
         VirtualFile suggestedDir = suggestedPath == null
                                    ? null
                                    : LocalFileSystem.getInstance().findFileByPath(FileUtil.toSystemIndependentName(suggestedPath));
-        final NullableConsumer<Sdk> consumer = new NullableConsumer<Sdk>() {
-          @Override
-          public void consume(@Nullable Sdk sdk) {
-            if (sdk == null) return;
-            if (!allSdks.contains(sdk)) {
-              allSdks.add(sdk);
-              sdkService.addSdk(sdk);
-            }
-            updateSdkList(allSdks, sdk);
+        final NullableConsumer<Sdk> consumer = sdk -> {
+          if (sdk == null) return;
+          if (!allSdks.contains(sdk)) {
+            allSdks.add(sdk);
+            sdkService.addSdk(sdk);
           }
+          updateSdkList(allSdks, sdk);
         };
         FileChooser.chooseFiles(descriptor, myProject, suggestedDir, new FileChooser.FileChooserConsumer() {
           @Override

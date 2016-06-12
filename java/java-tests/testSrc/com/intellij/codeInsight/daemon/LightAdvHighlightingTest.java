@@ -375,6 +375,14 @@ public class LightAdvHighlightingTest extends LightDaemonAnalyzerTestCase {
     doTestFile(BASE_PATH + "/" + getTestName(false) + ".java").checkSymbolNames().test();
   }
 
+  public void testNestedLocalClasses() throws Exception {
+    doTest(false, false);
+  }
+
+  public void testAmbiguousConstants() throws Exception {
+    doTest(false, false);
+  }
+
   public void testInsane() throws IOException {
     configureFromFileText("x.java", "class X { \nx_x_x_x\n }");
     List<HighlightInfo> infos = highlightErrors();
@@ -416,6 +424,8 @@ public class LightAdvHighlightingTest extends LightDaemonAnalyzerTestCase {
     List<Annotator> list = LanguageAnnotators.INSTANCE.allForLanguage(java);
     assertFalse(list.toString(), list.contains(annotator));
   }
+
+  public void testIllegalWhitespaces() { doTest(false, false); }
 
   // must stay public for PicoContainer to work
   public static class MyAnnotator implements Annotator {

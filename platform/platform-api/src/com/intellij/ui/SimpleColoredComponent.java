@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -123,6 +123,12 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
     myFragmentPadding = new TIntIntHashMap(10);
     myFragmentAlignment = new TIntIntHashMap(10);
     setOpaque(true);
+    updateUI();
+  }
+
+  @Override
+  public void updateUI() {
+    UISettings.setupComponentAntialiasing(this);
   }
 
   @NotNull
@@ -215,11 +221,11 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
     myFragmentTags.add(tag);
   }
 
-  @Deprecated
   /**
    * fragment width isn't a right name, it is actually a padding
    * @deprecated remove in IDEA 16
    */
+  @Deprecated
   public synchronized void appendFixedTextFragmentWidth(int width) {
     appendTextPadding(width);
   }
@@ -1041,12 +1047,12 @@ public class SimpleColoredComponent extends JComponent implements Accessible, Co
   @Override
   public AccessibleContext getAccessibleContext() {
     if (accessibleContext == null) {
-      accessibleContext = new MyAccessibleContext();
+      accessibleContext = new AccessibleSimpleColoredComponent();
     }
     return accessibleContext;
   }
 
-  private class MyAccessibleContext extends JComponent.AccessibleJComponent {
+  protected class AccessibleSimpleColoredComponent extends JComponent.AccessibleJComponent {
     @Override
     public String getAccessibleName() {
       return getCharSequence(false).toString();

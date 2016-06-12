@@ -41,6 +41,7 @@ import com.intellij.openapi.roots.FileIndexFacade;
 import com.intellij.openapi.util.*;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.*;
+import com.intellij.psi.impl.file.impl.FileManagerImpl;
 import com.intellij.psi.impl.smartPointers.SmartPointerManagerImpl;
 import com.intellij.psi.impl.source.PsiFileImpl;
 import com.intellij.psi.text.BlockSupport;
@@ -49,6 +50,7 @@ import com.intellij.util.*;
 import com.intellij.util.concurrency.Semaphore;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.messages.MessageBus;
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NonNls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -213,6 +215,8 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
   @Override
   public void commitAllDocuments() {
     ApplicationManager.getApplication().assertIsDispatchThread();
+    ((TransactionGuardImpl)TransactionGuard.getInstance()).assertWriteActionAllowed();
+
     if (myUncommittedDocuments.isEmpty()) return;
 
     final Document[] documents = getUncommittedDocuments();
@@ -286,6 +290,12 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
   @Override
   public void commitDocument(@NotNull final Document doc) {
     final Document document = doc instanceof DocumentWindow ? ((DocumentWindow)doc).getDelegate() : doc;
+
+    VirtualFile vFile = getVirtualFile(document);
+    if (vFile != null && !isFreeThreaded(vFile)) {
+      ((TransactionGuardImpl)TransactionGuard.getInstance()).assertWriteActionAllowed();
+    }
+
     if (!isCommitted(document)) {
       doCommit(document);
     }
@@ -336,31 +346,21 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
       getSmartPointerManager().fastenBelts(virtualFile);
     }
 
+    FileViewProvider viewProvider = getCachedViewProvider(document);
+
     myIsCommitInProgress = true;
     boolean success = true;
     try {
-      final FileViewProvider viewProvider = getCachedViewProvider(document);
       if (viewProvider != null) {
-        for (Processor<Document> finishRunnable : finishProcessors) {
-          success = finishRunnable.process(document);
-          if (synchronously) {
-            assert success : finishRunnable + " in " + finishProcessors;
-          }
-          if (!success) {
-            break;
-          }
-        }
-        if (success) {
-          clearUncommittedInfo(document);
-          if (virtualFile != null) {
-            getSmartPointerManager().updatePointerTargetsAfterReparse(virtualFile);
-          }
-          viewProvider.contentsSynchronized();
-        }
+        success = commitToExistingPsi(document, finishProcessors, synchronously, virtualFile, viewProvider);
       }
       else {
         handleCommitWithoutPsi(document);
       }
+    }
+    catch (Throwable e) {
+      forceReload(virtualFile, viewProvider);
+      LOG.error(e);
     }
     finally {
       if (success) {
@@ -370,6 +370,35 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
     }
 
     return success;
+  }
+
+  private boolean commitToExistingPsi(@NotNull Document document,
+                                      @NotNull List<Processor<Document>> finishProcessors,
+                                      boolean synchronously, @Nullable VirtualFile virtualFile, @NotNull FileViewProvider viewProvider) {
+    for (Processor<Document> finishRunnable : finishProcessors) {
+      boolean success = finishRunnable.process(document);
+      if (synchronously) {
+        assert success : finishRunnable + " in " + finishProcessors;
+      }
+      if (!success) {
+        return false;
+      }
+    }
+    clearUncommittedInfo(document);
+    if (virtualFile != null) {
+      getSmartPointerManager().updatePointerTargetsAfterReparse(virtualFile);
+    }
+    viewProvider.contentsSynchronized();
+    return true;
+  }
+
+  private void forceReload(VirtualFile virtualFile, @Nullable FileViewProvider viewProvider) {
+    if (viewProvider instanceof SingleRootFileViewProvider) {
+      ((SingleRootFileViewProvider)viewProvider).markInvalidated();
+    }
+    if (virtualFile != null) {
+      ((FileManagerImpl)((PsiManagerEx)myPsiManager).getFileManager()).forceReload(virtualFile);
+    }
   }
 
   private void checkAllElementsValid(@NotNull Document document, @NotNull final Object reason) {
@@ -420,7 +449,7 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
     }
   }
 
-  private static boolean isFreeThreaded(@NotNull VirtualFile file) {
+  static boolean isFreeThreaded(@NotNull VirtualFile file) {
     return Boolean.TRUE.equals(file.getUserData(SingleRootFileViewProvider.FREE_THREADED));
   }
 
@@ -451,52 +480,40 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
     if (SwingUtilities.isEventDispatchThread()) {
       commitAllDocuments();
       runnable.run();
+      return;
     }
-    else {
-      if (ApplicationManager.getApplication().isReadAccessAllowed()) {
-        LOG.error("Don't call commitAndRunReadAction inside ReadAction, it will cause a deadlock otherwise. "+Thread.currentThread());
-      }
 
-      final Semaphore s1 = new Semaphore();
-      final Semaphore s2 = new Semaphore();
-      final boolean[] committed = {false};
+    if (ApplicationManager.getApplication().isReadAccessAllowed()) {
+      LOG.error("Don't call commitAndRunReadAction inside ReadAction, it will cause a deadlock otherwise. "+Thread.currentThread());
+    }
 
-      application.runReadAction(
-        new Runnable() {
-          @Override
-          public void run() {
-            if (myUncommittedDocuments.isEmpty()) {
-              runnable.run();
-              committed[0] = true;
-            }
-            else {
-              s1.down();
-              s2.down();
-              TransactionGuard.getInstance().submitMergeableTransaction(TransactionKind.TEXT_EDITING, new Runnable() {
-                @Override
-                public void run() {
-                  commitAllDocuments();
-                  s1.up();
-                  s2.waitFor();
-                }
-              });
-            }
+    while (true) {
+      boolean executed = application.runReadAction(new Computable<Boolean>() {
+        @Override
+        public Boolean compute() {
+          if (myUncommittedDocuments.isEmpty()) {
+            runnable.run();
+            return true;
           }
+          return false;
         }
-      );
+      });
+      if (executed) break;
 
-      if (!committed[0]) {
-        s1.waitFor();
-        application.runReadAction(
-          new Runnable() {
+      final Semaphore semaphore = new Semaphore();
+      semaphore.down();
+      application.invokeLater(new Runnable() {
+        @Override
+        public void run() {
+          performWhenAllCommitted(new Runnable() {
             @Override
             public void run() {
-              s2.up();
-              runnable.run();
+              semaphore.up();
             }
-          }
-        );
-      }
+          });
+        }
+      }, ModalityState.any());
+      semaphore.waitFor();
     }
   }
 
@@ -534,6 +551,38 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
     return false;
   }
 
+  @Override
+  public void performLaterWhenAllCommitted(@NotNull final Runnable runnable) {
+    final ModalityState modalityState = ModalityState.defaultModalityState();
+    final Runnable whenAllCommitted = new Runnable() {
+      @Override
+      public void run() {
+        ApplicationManager.getApplication().invokeLater(new Runnable() {
+          @Override
+          public void run() {
+            if (hasUncommitedDocuments()) {
+              // no luck, will try later
+              performLaterWhenAllCommitted(runnable);
+            }
+            else {
+              runnable.run();
+            }
+          }
+        }, modalityState, myProject.getDisposed());
+      }
+    };
+    if (ApplicationManager.getApplication().isDispatchThread() && isInsideCommitHandler()) {
+      whenAllCommitted.run();
+    } else {
+      UIUtil.invokeLaterIfNeeded(new Runnable() {
+        @Override
+        public void run() {
+          performWhenAllCommitted(whenAllCommitted);
+        }
+      });
+    }
+  }
+
   private static class CompositeRunnable extends ArrayList<Runnable> implements Runnable {
     @Override
     public void run() {
@@ -561,7 +610,7 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
 
     if (!hasUncommitedDocuments() && !actionsWhenAllDocumentsAreCommitted.isEmpty()) {
       List<Map.Entry<Object, Runnable>> entries = new ArrayList<Map.Entry<Object, Runnable>>(new LinkedHashMap<Object, Runnable>(actionsWhenAllDocumentsAreCommitted).entrySet());
-      weAreInsideAfterCommitHandler();
+      beforeCommitHandler();
 
       try {
         for (Map.Entry<Object, Runnable> entry : entries) {
@@ -580,13 +629,17 @@ public abstract class PsiDocumentManagerBase extends PsiDocumentManager implemen
     }
   }
 
-  private void weAreInsideAfterCommitHandler() {
+  private void beforeCommitHandler() {
     actionsWhenAllDocumentsAreCommitted.put(PERFORM_ALWAYS_KEY, EmptyRunnable.getInstance()); // to prevent listeners from registering new actions during firing
   }
   private void checkWeAreOutsideAfterCommitHandler() {
-    if (actionsWhenAllDocumentsAreCommitted.get(PERFORM_ALWAYS_KEY) == EmptyRunnable.getInstance()) {
+    if (isInsideCommitHandler()) {
       throw new IncorrectOperationException("You must not call performWhenAllCommitted()/cancelAndRunWhenCommitted() from within after-commit handler");
     }
+  }
+
+  private boolean isInsideCommitHandler() {
+    return actionsWhenAllDocumentsAreCommitted.get(PERFORM_ALWAYS_KEY) == EmptyRunnable.getInstance();
   }
 
   @Override

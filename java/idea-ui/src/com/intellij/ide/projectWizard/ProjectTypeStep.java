@@ -19,10 +19,7 @@ import com.intellij.framework.addSupport.FrameworkSupportInModuleProvider;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.ide.util.frameworkSupport.FrameworkRole;
 import com.intellij.ide.util.frameworkSupport.FrameworkSupportUtil;
-import com.intellij.ide.util.newProjectWizard.AddSupportForFrameworksPanel;
-import com.intellij.ide.util.newProjectWizard.FrameworkSupportNode;
-import com.intellij.ide.util.newProjectWizard.TemplatesGroup;
-import com.intellij.ide.util.newProjectWizard.WizardDelegate;
+import com.intellij.ide.util.newProjectWizard.*;
 import com.intellij.ide.util.newProjectWizard.impl.FrameworkSupportModelBase;
 import com.intellij.ide.util.projectWizard.*;
 import com.intellij.ide.wizard.CommitStepException;
@@ -42,7 +39,6 @@ import com.intellij.openapi.roots.ui.configuration.projectRoot.LibrariesContaine
 import com.intellij.openapi.roots.ui.configuration.projectRoot.LibrariesContainerFactory;
 import com.intellij.openapi.ui.popup.ListItemDescriptorAdapter;
 import com.intellij.openapi.util.Comparing;
-import com.intellij.openapi.util.Condition;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.platform.ProjectTemplate;
@@ -90,12 +86,7 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
         return o.getId();
       }
     };
-  public static final Function<FrameworkSupportNode, String> NODE_STRING_FUNCTION = new Function<FrameworkSupportNode, String>() {
-    @Override
-    public String fun(FrameworkSupportNode node) {
-      return node.getId();
-    }
-  };
+  public static final Function<FrameworkSupportNode, String> NODE_STRING_FUNCTION = FrameworkSupportNodeBase::getId;
   private static final String TEMPLATES_CARD = "templates card";
   private static final String FRAMEWORKS_CARD = "frameworks card";
   private static final String PROJECT_WIZARD_GROUP = "project.wizard.group";
@@ -201,7 +192,7 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
         return getSelectedBuilder();
       }
     };
-    myFrameworksPanel = new AddSupportForFrameworksPanel(Collections.<FrameworkSupportInModuleProvider>emptyList(), model, true, myHeaderPanel);
+    myFrameworksPanel = new AddSupportForFrameworksPanel(Collections.emptyList(), model, true, myHeaderPanel);
     Disposer.register(this, myFrameworksPanel);
     myFrameworksPanelPlaceholder.add(myFrameworksPanel.getMainPanel());
     myFrameworksLabel.setLabelFor(myFrameworksPanel.getFrameworksTree());
@@ -242,12 +233,7 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
 
     final String groupId = PropertiesComponent.getInstance().getValue(PROJECT_WIZARD_GROUP);
     if (groupId != null) {
-      TemplatesGroup group = ContainerUtil.find(groups, new Condition<TemplatesGroup>() {
-        @Override
-        public boolean value(TemplatesGroup group) {
-          return groupId.equals(group.getId());
-        }
-      });
+      TemplatesGroup group = ContainerUtil.find(groups, group1 -> groupId.equals(group1.getId()));
       if (group != null) {
         myProjectTypeList.setSelectedValue(group, true);
       }
@@ -341,23 +327,15 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
       ModuleType type = getModuleType(group);
       moduleTypes.putValue(type, group);
     }
-    Collections.sort(groups, new Comparator<TemplatesGroup>() {
-      @Override
-      public int compare(TemplatesGroup o1, TemplatesGroup o2) {
-        int i = o2.getWeight() - o1.getWeight();
-        if (i != 0) return i;
-        int i1 = moduleTypes.get(getModuleType(o2)).size() - moduleTypes.get(getModuleType(o1)).size();
-        if (i1 != 0) return i1;
-        return o1.compareTo(o2);
-      }
+    Collections.sort(groups, (o1, o2) -> {
+      int i = o2.getWeight() - o1.getWeight();
+      if (i != 0) return i;
+      int i1 = moduleTypes.get(getModuleType(o2)).size() - moduleTypes.get(getModuleType(o1)).size();
+      if (i1 != 0) return i1;
+      return o1.compareTo(o2);
     });
 
-    Set<String> groupNames = ContainerUtil.map2Set(groups, new Function<TemplatesGroup, String>() {
-      @Override
-      public String fun(TemplatesGroup group) {
-        return group.getParentGroup();
-      }
-    });
+    Set<String> groupNames = ContainerUtil.map2Set(groups, TemplatesGroup::getParentGroup);
 
     // move subgroups
     MultiMap<String, TemplatesGroup> subGroups = new MultiMap<String, TemplatesGroup>();
@@ -411,12 +389,7 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
       List<FrameworkSupportInModuleProvider> providers = FrameworkSupportUtil.getProviders(groupModuleBuilder);
       final ProjectCategory category = group.getProjectCategory();
       if (category != null) {
-        List<FrameworkSupportInModuleProvider> filtered = ContainerUtil.filter(providers, new Condition<FrameworkSupportInModuleProvider>() {
-                    @Override
-                    public boolean value(FrameworkSupportInModuleProvider provider) {
-                      return matchFramework(category, provider);
-                    }
-                  });
+        List<FrameworkSupportInModuleProvider> filtered = ContainerUtil.filter(providers, provider -> matchFramework(category, provider));
         // add associated
         Map<String, FrameworkSupportInModuleProvider> map = ContainerUtil.newMapFromValues(providers.iterator(), PROVIDER_STRING_CONVERTOR);
         Set<FrameworkSupportInModuleProvider> set = new HashSet<FrameworkSupportInModuleProvider>(filtered);
@@ -526,13 +499,10 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
       List<FrameworkSupportNode> nodes = myFrameworksPanel.getSelectedNodes();
       if (nodes.isEmpty()) return templates;
       final List<String> selectedFrameworks = ContainerUtil.map(nodes, NODE_STRING_FUNCTION);
-      return ContainerUtil.filter(templates, new Condition<ProjectTemplate>() {
-        @Override
-        public boolean value(ProjectTemplate template) {
-          if (!(template instanceof ArchivedProjectTemplate)) return true;
-          List<String> frameworks = ((ArchivedProjectTemplate)template).getFrameworks();
-          return frameworks.containsAll(selectedFrameworks);
-        }
+      return ContainerUtil.filter(templates, template -> {
+        if (!(template instanceof ArchivedProjectTemplate)) return true;
+        List<String> frameworks = ((ArchivedProjectTemplate)template).getFrameworks();
+        return frameworks.containsAll(selectedFrameworks);
       });
     }
   }
@@ -543,6 +513,10 @@ public class ProjectTypeStep extends ModuleWizardStep implements SettingsStep, D
       if (!ok) {
         throw new CommitStepException(null);
       }
+    }
+    TemplatesGroup group = getSelectedGroup();
+    if (group != null) {
+      ProjectCategoryUsagesCollector.projectTypeUsed(group.getId());
     }
   }
 

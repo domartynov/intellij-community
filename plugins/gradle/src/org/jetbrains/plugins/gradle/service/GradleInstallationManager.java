@@ -30,7 +30,6 @@ import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.JarFileSystem;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import com.intellij.util.containers.ContainerUtilRt;
 import org.gradle.StartParameter;
@@ -50,7 +49,6 @@ import org.jetbrains.plugins.gradle.util.GradleUtil;
 import org.jetbrains.plugins.groovy.config.GroovyConfigUtils;
 
 import java.io.File;
-import java.io.FileFilter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -442,12 +440,9 @@ public class GradleInstallationManager {
     if(files == null) return null;
     final LocalFileSystem localFileSystem = LocalFileSystem.getInstance();
     final JarFileSystem jarFileSystem = JarFileSystem.getInstance();
-    return ContainerUtil.mapNotNull(files, new Function<File, VirtualFile>() {
-      @Override
-      public VirtualFile fun(File file) {
-        final VirtualFile virtualFile = localFileSystem.refreshAndFindFileByIoFile(file);
-        return virtualFile != null ? jarFileSystem.getJarRootForLocalFile(virtualFile) : null;
-      }
+    return ContainerUtil.mapNotNull(files, file -> {
+      final VirtualFile virtualFile = localFileSystem.refreshAndFindFileByIoFile(file);
+      return virtualFile != null ? jarFileSystem.getJarRootForLocalFile(virtualFile) : null;
     });
   }
 
@@ -540,12 +535,8 @@ public class GradleInstallationManager {
       return null;
     }
 
-    File[] distFiles = localDistribution.getDistributionDir().listFiles(new FileFilter() {
-      @Override
-      public boolean accept(File f) {
-        return f.isDirectory() && StringUtil.startsWith(f.getName(), "gradle-");
-      }
-    });
+    File[] distFiles = localDistribution.getDistributionDir().listFiles(
+      f -> f.isDirectory() && StringUtil.startsWith(f.getName(), "gradle-"));
 
     return distFiles == null || distFiles.length == 0 ? null : distFiles[0];
   }

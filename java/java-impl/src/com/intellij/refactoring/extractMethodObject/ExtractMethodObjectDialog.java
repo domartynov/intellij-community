@@ -15,8 +15,6 @@
  */
 package com.intellij.refactoring.extractMethodObject;
 
-import com.intellij.openapi.application.AcceptNestedTransactions;
-import com.intellij.openapi.application.TransactionKind;
 import com.intellij.openapi.editor.event.DocumentAdapter;
 import com.intellij.openapi.editor.event.DocumentEvent;
 import com.intellij.openapi.help.HelpManager;
@@ -47,7 +45,6 @@ import java.awt.event.ActionListener;
 import java.util.Enumeration;
 
 
-@AcceptNestedTransactions(TransactionKind.Common.TEXT_EDITING)
 public class ExtractMethodObjectDialog extends DialogWrapper implements AbstractExtractDialog {
   private final Project myProject;
   private final PsiType myReturnType;
@@ -212,10 +209,7 @@ public class ExtractMethodObjectDialog extends DialogWrapper implements Abstract
     if (myProtectedRadioButton.isSelected()) {
       return PsiModifier.PROTECTED;
     }
-    if (myPrivateRadioButton.isSelected()) {
-      return PsiModifier.PRIVATE;
-    }
-    return null;
+    return PsiModifier.PRIVATE;
   }
 
 
@@ -370,11 +364,7 @@ public class ExtractMethodObjectDialog extends DialogWrapper implements Abstract
       buffer.append("\n}.");
       buffer.append(myMethodName.getText());
       buffer.append("(");
-      buffer.append(StringUtil.join(myInputVariables, new Function<VariableData, String>() {
-        public String fun(final VariableData variableData) {
-          return variableData.name;
-        }
-      }, ", "));
+      buffer.append(StringUtil.join(myInputVariables, variableData -> variableData.name, ", "));
       buffer.append(")");
     }
 

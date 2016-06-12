@@ -453,6 +453,8 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
 
   public void testNoFieldsInSuperConstructorCall() throws Throwable { doTest(); }
 
+  public void testChainMethodsInSuperConstructorCall() throws Throwable { doTest(); }
+
   public void testNoUninitializedFieldsInConstructor() throws Throwable {
     configureByTestName();
     assertStringItems("aac", "aab", "hashCode");
@@ -1129,12 +1131,7 @@ public class SmartTypeCompletionTest extends LightFixtureCompletionTestCase {
   public void testInnerEnum() throws Exception {
     configureByTestName();
 
-    getLookup().setCurrentItem(ContainerUtil.find(myItems, new Condition<LookupElement>() {
-      @Override
-      public boolean value(final LookupElement lookupItem) {
-        return "Bar.Fubar.Bar".equals(lookupItem.getLookupString());
-      }
-    }));
+    getLookup().setCurrentItem(ContainerUtil.find(myItems, lookupItem -> "Bar.Fubar.Bar".equals(lookupItem.getLookupString())));
     select('\n');
     checkResultByTestName();
   }

@@ -88,7 +88,7 @@ public class SheetController {
 
   private String myResult;
   private final JPanel mySheetPanel;
-  private final SheetMessage mySheetMessage;
+  private SheetMessage mySheetMessage;
 
   private final JEditorPane messageTextPane = new JEditorPane();
   private final Dimension messageArea = new Dimension(250, Short.MAX_VALUE);
@@ -184,14 +184,11 @@ public class SheetController {
   }
 
   void requestFocus() {
-    IdeFocusManager.getGlobalInstance().doWhenFocusSettlesDown(new Runnable() {
-      @Override
-      public void run() {
-        if (myFocusedComponent != null) {
-          myFocusedComponent.requestFocus();
-        } else {
-          LOG.debug("My focused component is null for the next message: " + messageTextPane.getText());
-        }
+    IdeFocusManager.getGlobalInstance().doWhenFocusSettlesDown(() -> {
+      if (myFocusedComponent != null) {
+        myFocusedComponent.requestFocus();
+      } else {
+        LOG.debug("My focused component is null for the next message: " + messageTextPane.getText());
       }
     });
   }
@@ -493,5 +490,6 @@ public class SheetController {
 
   public void dispose() {
     mySheetPanel.unregisterKeyboardAction(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0));
+    mySheetMessage = null;
   }
 }

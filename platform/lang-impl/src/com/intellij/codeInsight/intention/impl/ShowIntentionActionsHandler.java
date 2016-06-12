@@ -70,7 +70,7 @@ public class ShowIntentionActionsHandler implements CodeInsightActionHandler {
     }
 
     final DaemonCodeAnalyzerImpl codeAnalyzer = (DaemonCodeAnalyzerImpl)DaemonCodeAnalyzer.getInstance(project);
-    codeAnalyzer.autoImportReferenceAtCursor(editor, file); //let autoimport complete
+    letAutoImportComplete(editor, file, codeAnalyzer);
 
     ShowIntentionsPass.IntentionsInfo intentions = new ShowIntentionsPass.IntentionsInfo();
     ShowIntentionsPass.getActionsToShow(editor, file, intentions, -1);
@@ -96,6 +96,10 @@ public class ShowIntentionActionsHandler implements CodeInsightActionHandler {
     if (!intentions.isEmpty()) {
       IntentionHintComponent.showIntentionHint(project, file, editor, intentions, true);
     }
+  }
+
+  private static void letAutoImportComplete(@NotNull Editor editor, @NotNull PsiFile file, DaemonCodeAnalyzerImpl codeAnalyzer) {
+    CommandProcessor.getInstance().runUndoTransparentAction(() -> codeAnalyzer.autoImportReferenceAtCursor(editor, file));
   }
 
   @Override
@@ -174,12 +178,8 @@ public class ShowIntentionActionsHandler implements CodeInsightActionHandler {
     FeatureUsageTracker.getInstance().triggerFeatureUsed("codeassists.quickFix");
     ((FeatureUsageTrackerImpl)FeatureUsageTracker.getInstance()).getFixesStats().registerInvocation();
 
-    final Pair<PsiFile, Editor> pair = hostEditor != null ? chooseBetweenHostAndInjected(hostFile, hostEditor, new PairProcessor<PsiFile, Editor>() {
-      @Override
-      public boolean process(PsiFile psiFile, Editor editor) {
-        return availableFor(psiFile, editor, action);
-      }
-    }) : Pair.<PsiFile, Editor>create(hostFile, null);
+    final Pair<PsiFile, Editor> pair = hostEditor != null ? chooseBetweenHostAndInjected(hostFile, hostEditor,
+                                                                                         (psiFile, editor) -> availableFor(psiFile, editor, action)) : Pair.<PsiFile, Editor>create(hostFile, null);
     if (pair == null) return false;
 
     CommandProcessor.getInstance().executeCommand(project, () -> {

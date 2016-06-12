@@ -70,6 +70,7 @@ import com.intellij.packageDependencies.DependencyValidationManager;
 import com.intellij.psi.*;
 import com.intellij.psi.impl.PsiDocumentManagerBase;
 import com.intellij.psi.search.scope.packageSet.NamedScopeManager;
+import com.intellij.psi.util.PsiModificationTracker;
 import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.util.*;
 import com.intellij.util.io.storage.HeavyProcessLatch;
@@ -169,8 +170,7 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
   @TestOnly
   public static List<HighlightInfo> getHighlights(@NotNull Document document, HighlightSeverity minSeverity, @NotNull Project project) {
     List<HighlightInfo> infos = new ArrayList<>();
-    processHighlights(document, project, minSeverity, 0, document.getTextLength(),
-                      new CommonProcessors.CollectProcessor<>(infos));
+    processHighlights(document, project, minSeverity, 0, document.getTextLength(), Processors.cancelableCollectProcessor(infos));
     return infos;
   }
 
@@ -411,15 +411,27 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
   }
 
   private boolean waitInOtherThread(int millis) throws Throwable {
-    Future<Boolean> future = ApplicationManager.getApplication().executeOnPooledThread(() -> {
-      try {
-        return myPassExecutorService.waitFor(millis);
-      }
-      catch (Throwable e) {
-        throw new RuntimeException(e);
-      }
-    });
-    return future.get();
+    Disposable disposable = Disposer.newDisposable();
+    // last hope protection against PsiModificationTrackerImpl.incCounter() craziness (yes, Kotlin)
+    myProject.getMessageBus().connect(disposable).subscribe(PsiModificationTracker.TOPIC,
+      () -> {
+        throw new IllegalStateException( "You must not perform PSI modifications from inside highlighting");
+      });
+
+    try {
+      Future<Boolean> future = ApplicationManager.getApplication().executeOnPooledThread(() -> {
+        try {
+          return myPassExecutorService.waitFor(millis);
+        }
+        catch (Throwable e) {
+          throw new RuntimeException(e);
+        }
+      });
+      return future.get();
+    }
+    finally {
+      Disposer.dispose(disposable);
+    }
   }
 
   @TestOnly
@@ -833,27 +845,11 @@ public class DaemonCodeAnalyzerImpl extends DaemonCodeAnalyzerEx implements Pers
         if (myDisposed || !myProject.isInitialized() || PowerSaveMode.isEnabled()) {
           return;
         }
+        // wait for heavy processing to stop, re-schedule daemon but not too soon
         if (HeavyProcessLatch.INSTANCE.isRunning()) {
-          final Disposable removeListenerDisposable = Disposer.newDisposable();
-          // wait for heavy processing to stop, re-schedule daemon but not too soon
-          HeavyProcessLatch.HeavyProcessListener heavyProcessListener = new HeavyProcessLatch.HeavyProcessListener() {
-            @Override
-            public void processStarted() {
-            }
-
-            @Override
-            public void processFinished() {
-              Disposer.dispose(removeListenerDisposable);
-              myAlarm.addRequest(myUpdateRunnable, Math.max(mySettings.AUTOREPARSE_DELAY, 100), ModalityState.NON_MODAL);
-            }
-          };
-          HeavyProcessLatch.INSTANCE.addListener(removeListenerDisposable, heavyProcessListener);
-          Disposer.register(DaemonCodeAnalyzerImpl.this, removeListenerDisposable);
-
-          if (!HeavyProcessLatch.INSTANCE.isRunning()) {
-            // in case heavy operation finished right before listener added
-            heavyProcessListener.processFinished();
-          }
+          HeavyProcessLatch.INSTANCE.executeOutOfHeavyProcess(() -> {
+            myAlarm.addRequest(myUpdateRunnable, Math.max(mySettings.AUTOREPARSE_DELAY, 100), ModalityState.NON_MODAL);
+          });
           return;
         }
         Editor activeEditor = FileEditorManager.getInstance(myProject).getSelectedTextEditor();

@@ -44,6 +44,7 @@ import org.jetbrains.plugins.groovy.lang.psi.api.statements.GrVariable;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.blocks.GrClosableBlock;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.expressions.GrExpression;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.expressions.GrReferenceExpression;
+import org.jetbrains.plugins.groovy.lang.psi.api.statements.params.GrParameter;
 import org.jetbrains.plugins.groovy.lang.psi.api.statements.typedef.GrTraitTypeDefinition;
 import org.jetbrains.plugins.groovy.lang.psi.api.toplevel.imports.GrImportStatement;
 import org.jetbrains.plugins.groovy.lang.psi.api.types.GrCodeReferenceElement;
@@ -79,12 +80,7 @@ public class GroovyCodeFragmentFactory extends CodeFragmentFactory {
     final Map<String, String> parameters = pair.first;
 
     List<String> names = new ArrayList<String>(parameters.keySet());
-    List<String> values = ContainerUtil.map(names, new Function<String, String>() {
-      @Override
-      public String fun(String name) {
-        return parameters.get(name);
-      }
-    });
+    List<String> values = ContainerUtil.map(names, name -> parameters.get(name));
 
     String text = toEval.getText();
     final String groovyText = StringUtil.join(names, ", ") + "->" + stripImports(text, toEval);
@@ -248,7 +244,7 @@ public class GroovyCodeFragmentFactory extends CodeFragmentFactory {
           return;
         }
 
-        if (resolved instanceof PsiLocalVariable || resolved instanceof PsiParameter) {
+        if (resolved instanceof PsiLocalVariable || resolved instanceof PsiParameter && !(resolved instanceof GrParameter)) {
           String name = referenceExpression.getReferenceName();
           parameters.put(name, name);
         }

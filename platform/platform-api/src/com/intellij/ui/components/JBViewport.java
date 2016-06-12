@@ -21,6 +21,7 @@ import com.intellij.openapi.util.registry.Registry;
 import com.intellij.ui.components.JBScrollPane.Alignment;
 import com.intellij.ui.table.JBTable;
 import com.intellij.util.ui.ComponentWithEmptyText;
+import com.intellij.util.ui.JBSwingUtilities;
 import com.intellij.util.ui.StatusText;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.Nullable;
@@ -156,6 +157,11 @@ public class JBViewport extends JViewport implements ZoomableViewport {
   }
 
   @Override
+  protected Graphics getComponentGraphics(Graphics graphics) {
+    return JBSwingUtilities.runGlobalCGTransform(this, super.getComponentGraphics(graphics));
+  }
+
+  @Override
   public void paint(Graphics g) {
     myPaintingNow = true;
     if (myZoomer != null && myZoomer.isActive()) {
@@ -211,6 +217,26 @@ public class JBViewport extends JViewport implements ZoomableViewport {
       return UIUtil.getClientProperty(bar, Alignment.class);
     }
     return null;
+  }
+
+  private static boolean isAlignmentNeeded(JComponent view) {
+    return !SystemInfo.isMac && (view instanceof JList || view instanceof JTree || Registry.is("ide.scroll.align.component"));
+  }
+
+  static void fixPreferredSize(Dimension size, JComponent view, JScrollBar vsb, JScrollBar hsb) {
+    if (!view.isPreferredSizeSet()) {
+      Border border = view.getBorder();
+      if (border instanceof ViewBorder) {
+        Alignment va = getAlignment(vsb);
+        if (va == Alignment.LEFT || va == Alignment.RIGHT && isAlignmentNeeded(view)) {
+          size.width -= vsb.getWidth();
+        }
+        Alignment ha = getAlignment(hsb);
+        if (ha == Alignment.TOP || ha == Alignment.BOTTOM && isAlignmentNeeded(view)) {
+          size.height -= hsb.getHeight();
+        }
+      }
+    }
   }
 
   private static void doLayout(JScrollPane pane, JViewport viewport, Component view) {
@@ -382,10 +408,6 @@ public class JBViewport extends JViewport implements ZoomableViewport {
           }
         }
       }
-    }
-
-    private boolean isAlignmentNeeded(JComponent view) {
-      return !SystemInfo.isMac && (view instanceof JList || view instanceof JTree || Registry.is("ide.scroll.align.component"));
     }
   }
 }

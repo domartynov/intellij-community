@@ -19,12 +19,11 @@ import com.intellij.diagnostic.IdeErrorsDialog
 import com.intellij.externalDependencies.DependencyOnPlugin
 import com.intellij.externalDependencies.ExternalDependenciesManager
 import com.intellij.ide.IdeBundle
+import com.intellij.ide.externalComponents.ExternalComponentManager
+import com.intellij.ide.externalComponents.UpdatableExternalComponent
 import com.intellij.ide.plugins.*
 import com.intellij.ide.util.PropertiesComponent
-import com.intellij.notification.NotificationDisplayType
-import com.intellij.notification.NotificationGroup
-import com.intellij.notification.NotificationListener
-import com.intellij.notification.NotificationType
+import com.intellij.notification.*
 import com.intellij.openapi.application.*
 import com.intellij.openapi.application.ex.ApplicationInfoEx
 import com.intellij.openapi.diagnostic.IdeaLoggingEvent
@@ -37,18 +36,16 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
-import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.updateSettings.UpdateStrategyCustomization
 import com.intellij.openapi.util.ActionCallback
 import com.intellij.openapi.util.BuildNumber
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.util.text.StringUtil
-import com.intellij.openapi.vfs.CharsetToolkit
 import com.intellij.util.PlatformUtils
 import com.intellij.util.SystemProperties
 import com.intellij.util.containers.ContainerUtil
+import com.intellij.util.containers.MultiMap
 import com.intellij.util.io.HttpRequests
 import com.intellij.util.io.URLUtil
 import com.intellij.util.loadElement
@@ -56,7 +53,6 @@ import com.intellij.util.ui.UIUtil
 import com.intellij.xml.util.XmlStringUtil
 import org.apache.http.client.utils.URIBuilder
 import org.jdom.JDOMException
-import org.jetbrains.annotations.Contract
 import java.io.File
 import java.io.IOException
 import java.net.URISyntaxException
@@ -75,14 +71,13 @@ object UpdateChecker {
   @JvmField
   val NOTIFICATIONS = NotificationGroup(IdeBundle.message("update.notifications.group"), NotificationDisplayType.STICKY_BALLOON, true)
 
-  private val INSTALLATION_UID = "installation.uid"
   private val DISABLED_UPDATE = "disabled_update.txt"
   private val NO_PLATFORM_UPDATE = "ide.no.platform.update"
 
   private var ourDisabledToUpdatePlugins: MutableSet<String>? = null
   private val ourAdditionalRequestOptions = hashMapOf<String, String>()
   private val ourUpdatedPlugins = hashMapOf<String, PluginDownloader>()
-  private val ourShownNotificationTypes = Collections.synchronizedSet(EnumSet.noneOf(NotificationUniqueType::class.java))
+  private val ourShownNotifications = MultiMap<NotificationUniqueType, Notification>()
 
   val excludedFromUpdateCheckPlugins = hashSetOf<String>()
 
@@ -133,15 +128,12 @@ object UpdateChecker {
     val result = checkPlatformUpdate(updateSettings)
 
     if (manualCheck && result.state == UpdateStrategy.State.LOADED) {
-      val settings = UpdateSettings.getInstance()
-      settings.saveLastCheckedInfo()
-      settings.setKnownChannelIds(result.allChannelsIds)
+      UpdateSettings.getInstance().saveLastCheckedInfo()
     }
     else if (result.state == UpdateStrategy.State.CONNECTION_ERROR) {
       val e = result.error
       if (e != null) LOG.debug(e)
-      val cause = e?.message ?: "internal error"
-      showErrorMessage(manualCheck, IdeBundle.message("updates.error.connection.failed", cause))
+      showErrorMessage(manualCheck, IdeBundle.message("updates.error.connection.failed", e?.message ?: "internal error"))
       return
     }
 
@@ -149,30 +141,24 @@ object UpdateChecker {
 
     indicator?.text = IdeBundle.message("updates.checking.plugins")
 
+    val buildNumber: BuildNumber? = result.newBuild?.apiVersion
+    val incompatiblePlugins: MutableCollection<IdeaPluginDescriptor>? = if (buildNumber != null) HashSet<IdeaPluginDescriptor>() else null
+
     val updatedPlugins: Collection<PluginDownloader>?
-    val incompatiblePlugins: MutableCollection<IdeaPluginDescriptor>?
-
-    if (newChannelReady(result.channelToPropose)) {
-      updatedPlugins = null
-      incompatiblePlugins = null
+    val externalUpdates: Collection<ExternalUpdate>?
+    try {
+      updatedPlugins = checkPluginsUpdate(updateSettings, indicator, incompatiblePlugins, buildNumber)
+      externalUpdates = updateExternal(manualCheck, updateSettings, indicator)
     }
-    else {
-      val buildNumber: BuildNumber? = result.newBuildInSelectedChannel?.apiVersion
-
-      incompatiblePlugins = if (buildNumber != null) HashSet<IdeaPluginDescriptor>() else null
-      try {
-        updatedPlugins = checkPluginsUpdate(updateSettings, indicator, incompatiblePlugins, buildNumber)
-      }
-      catch (e: IOException) {
-        showErrorMessage(manualCheck, IdeBundle.message("updates.error.connection.failed", e.message))
-        return
-      }
+    catch (e: IOException) {
+      showErrorMessage(manualCheck, IdeBundle.message("updates.error.connection.failed", e.message))
+      return
     }
 
     // show result
 
     ApplicationManager.getApplication().invokeLater({
-      showUpdateResult(project, result, updateSettings, updatedPlugins, incompatiblePlugins, !fromSettings, manualCheck)
+      showUpdateResult(project, result, updateSettings, updatedPlugins, incompatiblePlugins, externalUpdates, !fromSettings, manualCheck)
       callback?.setDone()
     }, if (fromSettings) ModalityState.any() else ModalityState.NON_MODAL)
   }
@@ -215,10 +201,7 @@ object UpdateChecker {
       return CheckForUpdateResult(UpdateStrategy.State.NOTHING_LOADED, null)
     }
 
-    val appInfo = ApplicationInfo.getInstance()
-    val majorVersion = Integer.parseInt(appInfo.majorVersion)
-    val customization = UpdateStrategyCustomization.getInstance()
-    val strategy = UpdateStrategy(majorVersion, appInfo.build, updateInfo, settings, customization)
+    val strategy = UpdateStrategy(ApplicationInfo.getInstance().build, updateInfo, settings)
     return strategy.checkForUpdates()
   }
 
@@ -312,6 +295,37 @@ object UpdateChecker {
 
   @Throws(IOException::class)
   @JvmStatic
+  fun updateExternal(manualCheck: Boolean, updateSettings: UpdateSettings, indicator: ProgressIndicator?) : Collection<ExternalUpdate> {
+    val result = arrayListOf<ExternalUpdate>()
+    val manager = ExternalComponentManager.getInstance()
+    indicator?.text = IdeBundle.message("updates.external.progress")
+
+    for (source in manager.componentSources) {
+      indicator?.checkCanceled()
+      if (source.name in updateSettings.enabledExternalUpdateSources) {
+        try {
+          val siteResult = arrayListOf<UpdatableExternalComponent>()
+          for (component in source.getAvailableVersions(indicator, updateSettings)) {
+            if (component.isUpdateFor(manager.findExistingComponentMatching(component, source))) {
+              siteResult.add(component)
+            }
+          }
+          if (!siteResult.isEmpty()) {
+            result.add(ExternalUpdate(siteResult, source))
+          }
+        }
+        catch (e: Exception) {
+          LOG.warn(e)
+          showErrorMessage(manualCheck, IdeBundle.message("updates.external.error.message", source.name, e.message ?: "internal error"))
+        }
+      }
+    }
+
+    return result
+  }
+
+  @Throws(IOException::class)
+  @JvmStatic
   fun checkAndPrepareToInstall(downloader: PluginDownloader,
                                state: InstalledPluginsState,
                                toUpdate: MutableMap<PluginId, PluginDownloader>,
@@ -362,60 +376,43 @@ object UpdateChecker {
     }
   }
 
-  @Contract("null -> false")
-  private fun newChannelReady(channelToPropose: UpdateChannel?): Boolean {
-    return channelToPropose?.getLatestBuild() != null
-  }
-
   private fun showUpdateResult(project: Project?,
                                checkForUpdateResult: CheckForUpdateResult,
                                updateSettings: UpdateSettings,
                                updatedPlugins: Collection<PluginDownloader>?,
                                incompatiblePlugins: Collection<IdeaPluginDescriptor>?,
+                               externalUpdates: Collection<ExternalUpdate>?,
                                enableLink: Boolean,
                                alwaysShowResults: Boolean) {
-    val channelToPropose = checkForUpdateResult.channelToPropose
     val updatedChannel = checkForUpdateResult.updatedChannel
-    val latestBuild = checkForUpdateResult.newBuildInSelectedChannel
+    val newBuild = checkForUpdateResult.newBuild
 
-    if (updatedChannel != null && latestBuild != null) {
+    if (updatedChannel != null && newBuild != null) {
       val runnable = {
+        val patch = checkForUpdateResult.findPatchForBuild(ApplicationInfo.getInstance().build)
         val forceHttps = updateSettings.canUseSecureConnection()
-        UpdateInfoDialog(updatedChannel, latestBuild, enableLink, forceHttps, updatedPlugins, incompatiblePlugins).show()
+        UpdateInfoDialog(updatedChannel, newBuild, patch, enableLink, forceHttps, updatedPlugins, incompatiblePlugins).show()
       }
+
+      ourShownNotifications.remove(NotificationUniqueType.PLATFORM)?.forEach { it.expire() }
 
       if (alwaysShowResults) {
         runnable.invoke()
       }
       else {
         val message = IdeBundle.message("updates.ready.message", ApplicationNamesInfo.getInstance().fullProductName)
-        showNotification(project, message, runnable, NotificationUniqueType.UPDATE_IN_CHANNEL)
+        showNotification(project, message, runnable, NotificationUniqueType.PLATFORM)
       }
+      return
     }
-    else if (newChannelReady(channelToPropose)) {
-      val runnable = {
-        val dialog = NewChannelDialog(channelToPropose!!)
-        dialog.show()
-        // once we informed that new product is available (when new channel was detected), remember the fact
-        if (dialog.exitCode == DialogWrapper.CANCEL_EXIT_CODE &&
-            checkForUpdateResult.state == UpdateStrategy.State.LOADED &&
-            !updateSettings.knownChannelsIds.contains(channelToPropose.id)) {
-          val newIds = ArrayList(updateSettings.knownChannelsIds)
-          newIds.add(channelToPropose.id)
-          updateSettings.setKnownChannelIds(newIds)
-        }
-      }
 
-      if (alwaysShowResults) {
-        runnable.invoke()
-      }
-      else {
-        val message = IdeBundle.message("updates.new.version.available", ApplicationNamesInfo.getInstance().fullProductName)
-        showNotification(project, message, runnable, NotificationUniqueType.NEW_CHANNEL)
-      }
-    }
-    else if (updatedPlugins != null && !updatedPlugins.isEmpty()) {
+    var updateFound = false
+
+    if (updatedPlugins != null && !updatedPlugins.isEmpty()) {
+      updateFound = true
       val runnable = { PluginUpdateInfoDialog(updatedPlugins, enableLink).show() }
+
+      ourShownNotifications.remove(NotificationUniqueType.PLUGINS)?.forEach { it.expire() }
 
       if (alwaysShowResults) {
         runnable.invoke()
@@ -423,28 +420,45 @@ object UpdateChecker {
       else {
         val plugins = updatedPlugins.joinToString { downloader -> downloader.pluginName }
         val message = IdeBundle.message("updates.plugins.ready.message", updatedPlugins.size, plugins)
-        showNotification(project, message, runnable, NotificationUniqueType.PLUGINS_UPDATE)
+        showNotification(project, message, runnable, NotificationUniqueType.PLUGINS)
       }
     }
-    else if (alwaysShowResults) {
+
+    if (externalUpdates != null && !externalUpdates.isEmpty()) {
+      updateFound = true
+
+      ourShownNotifications.remove(NotificationUniqueType.EXTERNAL)?.forEach { it.expire() }
+
+      for (update in externalUpdates) {
+        val runnable = { update.source.installUpdates(update.components) }
+
+        if (alwaysShowResults) {
+          runnable.invoke()
+        }
+        else {
+          val updates = update.components.joinToString(", ")
+          val message = IdeBundle.message("updates.external.ready.message", update.components.size, updates)
+          showNotification(project, message, runnable, NotificationUniqueType.EXTERNAL)
+        }
+      }
+    }
+
+    if (!updateFound && alwaysShowResults) {
       NoUpdatesDialog(enableLink).show()
     }
   }
 
-  private fun showNotification(project: Project?, message: String, action: (() -> Unit), notificationType: NotificationUniqueType) {
-    if (!ourShownNotificationTypes.add(notificationType)) {
-      return
-    }
-
-    var listener = NotificationListener { notification, event ->
+  private fun showNotification(project: Project?, message: String, action: () -> Unit, notificationType: NotificationUniqueType) {
+    val listener = NotificationListener { notification, event ->
       notification.expire()
       action.invoke()
     }
 
     val title = IdeBundle.message("update.notifications.title")
-    NOTIFICATIONS.createNotification(title, XmlStringUtil.wrapInHtml(message), NotificationType.INFORMATION, listener)
-        .whenExpired { ourShownNotificationTypes.remove(notificationType) }
-        .notify(project)
+    val notification = NOTIFICATIONS.createNotification(title, XmlStringUtil.wrapInHtml(message), NotificationType.INFORMATION, listener)
+    notification.whenExpired { ourShownNotifications.remove(notificationType, notification) }
+    notification.notify(project)
+    ourShownNotifications.putValue(notificationType, notification)
   }
 
   @JvmStatic
@@ -454,7 +468,7 @@ object UpdateChecker {
 
   private fun prepareUpdateCheckArgs(uriBuilder: URIBuilder) {
     addUpdateRequestParameter("build", ApplicationInfo.getInstance().build.asString())
-    addUpdateRequestParameter("uid", getInstallationUID(PropertiesComponent.getInstance()))
+    addUpdateRequestParameter("uid", PermanentInstallationID.get())
     addUpdateRequestParameter("os", SystemInfo.OS_NAME + ' ' + SystemInfo.OS_VERSION)
     if (ApplicationInfoEx.getInstanceEx().isEAP) {
       addUpdateRequestParameter("eap", "")
@@ -465,53 +479,10 @@ object UpdateChecker {
     }
   }
 
+  @Deprecated("Replaced", ReplaceWith("PermanentInstallationID.get()", "com.intellij.openapi.application.PermanentInstallationID"))
   @JvmStatic
-  fun getInstallationUID(propertiesComponent: PropertiesComponent): String {
-    if (SystemInfo.isWindows) {
-      val uid = getInstallationUIDOnWindows(propertiesComponent)
-      if (uid != null) {
-        return uid
-      }
-    }
-
-    var uid = propertiesComponent.getValue(INSTALLATION_UID)
-    if (uid == null) {
-      uid = generateUUID()
-      propertiesComponent.setValue(INSTALLATION_UID, uid)
-    }
-    return uid
-  }
-
-  private fun getInstallationUIDOnWindows(propertiesComponent: PropertiesComponent): String? {
-    val appdata = System.getenv("APPDATA")
-    if (appdata != null) {
-      val jetBrainsDir = File(appdata, "JetBrains")
-      if (jetBrainsDir.isDirectory || jetBrainsDir.mkdirs()) {
-        val permanentIdFile = File(jetBrainsDir, "PermanentUserId")
-        try {
-          if (permanentIdFile.exists()) {
-            val bytes = permanentIdFile.readBytes()
-            val offset = if (CharsetToolkit.hasUTF8Bom(bytes)) CharsetToolkit.UTF8_BOM.size else 0
-            return String(bytes, offset, bytes.size - offset, Charsets.UTF_8)
-          }
-
-          val uuid = propertiesComponent.getValue(INSTALLATION_UID) ?: generateUUID()
-          permanentIdFile.writeText(uuid, Charsets.UTF_8)
-          return uuid
-        }
-        catch (e: IOException) {
-          LOG.debug(e)
-        }
-      }
-    }
-
-    return null
-  }
-
-  private fun generateUUID(): String =
-      try { UUID.randomUUID().toString() }
-      catch (ignored: Exception) { "" }
-      catch (ignored: InternalError) { "" }
+  @Suppress("unused", "UNUSED_PARAMETER")
+  fun getInstallationUID(c: PropertiesComponent) = PermanentInstallationID.get()
 
   @JvmStatic
   @Throws(IOException::class)
@@ -629,7 +600,5 @@ object UpdateChecker {
     }
   }
 
-  private enum class NotificationUniqueType {
-    NEW_CHANNEL, UPDATE_IN_CHANNEL, PLUGINS_UPDATE
-  }
+  private enum class NotificationUniqueType { PLATFORM, PLUGINS, EXTERNAL }
 }

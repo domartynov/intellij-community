@@ -111,7 +111,7 @@ public class ExternalSystemViewDefaultContributor extends ExternalSystemViewCont
         //noinspection unchecked
         ModuleDependencyDataExternalSystemNode moduleDependencyDataExternalSystemNode =
           new ModuleDependencyDataExternalSystemNode(externalProjectsView, (DataNode<ModuleDependencyData>)dataNode);
-        if (dataNode.getParent() != null && dataNode.getParent().getData() instanceof ModuleDependencyData) {
+        if (dataNode.getParent() != null && dataNode.getParent().getData() instanceof AbstractDependencyData) {
           result.add(moduleDependencyDataExternalSystemNode);
         }
         else {
@@ -169,7 +169,7 @@ public class ExternalSystemViewDefaultContributor extends ExternalSystemViewCont
     }
   }
 
-  @Order(2)
+  @Order(ExternalSystemNode.BUILTIN_DEPENDENCIES_DATA_NODE_ORDER)
   private static class MyDependenciesNode extends ExternalSystemNode {
     public MyDependenciesNode(ExternalProjectsView externalProjectsView) {
       //noinspection unchecked

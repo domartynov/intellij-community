@@ -146,6 +146,7 @@ public class FileManagerImpl implements FileManager {
   }
 
   public void forceReload(@NotNull VirtualFile vFile) {
+    LanguageSubstitutors.cancelReparsing(vFile);
     if (findCachedViewProvider(vFile) == null) {
       return;
     }
@@ -465,7 +466,9 @@ public class FileManagerImpl implements FileManager {
           }
           else {
             FileViewProvider viewProvider = myVFileToViewProviderMap.remove(file);
-            markInvalidated(viewProvider);
+            if (viewProvider != null) {
+              markInvalidated(viewProvider);
+            }
           }
           return true;
         }
@@ -476,7 +479,7 @@ public class FileManagerImpl implements FileManager {
     }
   }
 
-  private void markInvalidated(FileViewProvider viewProvider) {
+  private void markInvalidated(@NotNull FileViewProvider viewProvider) {
     if (viewProvider instanceof SingleRootFileViewProvider) {
       ((SingleRootFileViewProvider)viewProvider).markInvalidated();
     }

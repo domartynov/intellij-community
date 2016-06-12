@@ -78,12 +78,11 @@ public class NotificationsUtil {
       subtitle = StringUtil.trimLog(StringUtil.notNullize(subtitle), TITLE_LIMIT);
       content = StringUtil.trimLog(content, CONTENT_LIMIT);
     }
+    if (isContent) {
+      content = StringUtil.replace(content, "<p/>", "<br>");
+    }
     String colorText = color == null ? null : "#" + ColorUtil.toHex(color);
     return buildHtml(title, subtitle, content, style, isContent ? null : colorText, isContent ? colorText : null, contentStyle);
-  }
-
-  public static String buildHtml(@Nullable String title, @Nullable String subtitle, @Nullable String content, @Nullable String style) {
-    return buildHtml(title, subtitle, content, style, null, null, null);
   }
 
   @NotNull
@@ -125,18 +124,24 @@ public class NotificationsUtil {
 
   @Nullable
   public static String getFontStyle() {
-    String fontName = null;
+    String fontName = getFontName();
+    return StringUtil.isEmpty(fontName) ? null : "font-family:" + fontName + ";";
+  }
+
+  @Nullable
+  public static Pair<String, Integer> getFontData() {
     UISettings uiSettings = UISettings.getInstance();
     if (uiSettings.OVERRIDE_NONIDEA_LAF_FONTS) {
-      fontName = uiSettings.FONT_FACE;
+      return Pair.create(uiSettings.FONT_FACE, uiSettings.FONT_SIZE);
     }
-    else {
-      Pair<String, Integer> systemFontData = UIUtil.getSystemFontData();
-      if (systemFontData != null) {
-        fontName = systemFontData.first;
-      }
-    }
-    return StringUtil.isEmpty(fontName) ? null : "font-family:" + fontName + ";";
+    Pair<String, Integer> systemFontData = UIUtil.getSystemFontData();
+    return systemFontData == null ? null : systemFontData;
+  }
+
+  @Nullable
+  public static String getFontName() {
+    Pair<String, Integer> data = getFontData();
+    return data == null ? null : data.first;
   }
 
   @Nullable

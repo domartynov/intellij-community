@@ -34,7 +34,7 @@ import com.intellij.codeInspection.ui.InspectionToolPresentation;
 import com.intellij.codeInspection.ui.ProblemDescriptionNode;
 import com.intellij.lang.Language;
 import com.intellij.openapi.progress.ProgressManager;
-import com.intellij.openapi.util.Computable;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.FileStatus;
 import com.intellij.psi.*;
 import com.intellij.psi.util.PsiUtilCore;
@@ -51,11 +51,12 @@ public class OfflineProblemDescriptorNode extends ProblemDescriptionNode {
                                CommonProblemDescriptor descriptor,
                                @NotNull LocalInspectionToolWrapper toolWrapper,
                                @NotNull InspectionToolPresentation presentation,
-                               OfflineProblemDescriptor offlineDescriptor) {
-    super(refEntity, descriptor, toolWrapper, presentation);
+                               @NotNull OfflineProblemDescriptor offlineDescriptor) {
+    super(refEntity, descriptor, toolWrapper, presentation, false, offlineDescriptor::getLine);
     if (descriptor == null) {
       setUserObject(offlineDescriptor);
     }
+    init(presentation.getContext().getProject());
   }
 
   static OfflineProblemDescriptorNode create(@NotNull OfflineProblemDescriptor offlineDescriptor,
@@ -67,13 +68,17 @@ public class OfflineProblemDescriptorNode extends ProblemDescriptionNode {
   }
 
   @Override
-  public boolean isValid() {
-    return true;
-  }
-
-  @Override
   public FileStatus getNodeStatus() {
     return FileStatus.NOT_CHANGED;
+  }
+
+  @NotNull
+  @Override
+  protected String calculatePresentableName() {
+    String presentableName = super.calculatePresentableName();
+    return presentableName.isEmpty() && getUserObject() instanceof OfflineProblemDescriptor
+           ? StringUtil.notNullize(((OfflineProblemDescriptor)getUserObject()).getDescription())
+           : presentableName;
   }
 
   private static PsiElement[] getElementsIntersectingRange(PsiFile file, final int startOffset, final int endOffset) {
@@ -104,12 +109,8 @@ public class OfflineProblemDescriptorNode extends ProblemDescriptionNode {
     if (element instanceof RefElement) {
       final PsiElement psiElement = ((RefElement)element).getElement();
       if (psiElement != null) {
-        ProblemDescriptor descriptor = ProgressManager.getInstance().runProcess(new Computable<ProblemDescriptor>() {
-          @Override
-          public ProblemDescriptor compute() {
-            return runLocalTool(psiElement, inspectionManager, offlineProblemDescriptor, toolWrapper);
-          }
-        }, new DaemonProgressIndicator());
+        ProblemDescriptor descriptor = ProgressManager.getInstance().runProcess(
+          () -> runLocalTool(psiElement, inspectionManager, offlineProblemDescriptor, toolWrapper), new DaemonProgressIndicator());
         if (descriptor != null) return descriptor;
       }
       return null;

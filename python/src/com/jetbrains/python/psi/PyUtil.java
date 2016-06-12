@@ -54,9 +54,7 @@ import com.intellij.openapi.wm.WindowManager;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
 import com.intellij.psi.stubs.StubElement;
-import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.util.PsiUtilCore;
-import com.intellij.psi.util.QualifiedName;
+import com.intellij.psi.util.*;
 import com.intellij.ui.awt.RelativePoint;
 import com.intellij.util.*;
 import com.intellij.util.containers.ContainerUtil;
@@ -493,13 +491,10 @@ public class PyUtil {
       File pycache = new File(file.getParentFile(), PyNames.PYCACHE);
       if (pycache.isDirectory()) {
         final String shortName = FileUtil.getNameWithoutExtension(file);
-        Collections.addAll(filesToDelete, pycache.listFiles(new FileFilter() {
-          @Override
-          public boolean accept(File pathname) {
-            if (!FileUtilRt.extensionEquals(pathname.getName(), "pyc")) return false;
-            String nameWithMagic = FileUtil.getNameWithoutExtension(pathname);
-            return FileUtil.getNameWithoutExtension(nameWithMagic).equals(shortName);
-          }
+        Collections.addAll(filesToDelete, pycache.listFiles(pathname -> {
+          if (!FileUtilRt.extensionEquals(pathname.getName(), "pyc")) return false;
+          String nameWithMagic = FileUtil.getNameWithoutExtension(pathname);
+          return FileUtil.getNameWithoutExtension(nameWithMagic).equals(shortName);
         }));
       }
       FileUtil.asyncDelete(filesToDelete);
@@ -659,7 +654,10 @@ public class PyUtil {
     for (ResolveResult resolveResult : resolveResults) {
       final int rate = resolveResult instanceof RatedResolveResult ? ((RatedResolveResult)resolveResult).getRate() : 0;
       if (rate >= maxRate) {
-        filtered.add(resolveResult.getElement());
+        final PsiElement element = resolveResult.getElement();
+        if (element != null) {
+          filtered.add(element);
+        }
       }
     }
     return filtered;
@@ -830,21 +828,44 @@ public class PyUtil {
    * Force re-highlighting in all open editors that belong to specified project.
    */
   public static void rehighlightOpenEditors(final @NotNull Project project) {
-    ApplicationManager.getApplication().runWriteAction(new Runnable() {
-      @Override
-      public void run() {
+    ApplicationManager.getApplication().runWriteAction(() -> {
 
-        for (Editor editor : EditorFactory.getInstance().getAllEditors()) {
-          if (editor instanceof EditorEx && editor.getProject() == project) {
-            final VirtualFile vFile = ((EditorEx)editor).getVirtualFile();
-            if (vFile != null) {
-              final EditorHighlighter highlighter = EditorHighlighterFactory.getInstance().createEditorHighlighter(project, vFile);
-              ((EditorEx)editor).setHighlighter(highlighter);
-            }
+      for (Editor editor : EditorFactory.getInstance().getAllEditors()) {
+        if (editor instanceof EditorEx && editor.getProject() == project) {
+          final VirtualFile vFile = ((EditorEx)editor).getVirtualFile();
+          if (vFile != null) {
+            final EditorHighlighter highlighter = EditorHighlighterFactory.getInstance().createEditorHighlighter(project, vFile);
+            ((EditorEx)editor).setHighlighter(highlighter);
           }
         }
       }
     });
+  }
+
+  public static <T, P> T getParameterizedCachedValue(@NotNull PsiElement element, @NotNull P param, @NotNull NotNullFunction<P, T> f) {
+    final Map<P, T> cache = CachedValuesManager.getCachedValue(element, new CachedValueProvider<Map<P, T>>() {
+      @Nullable
+      @Override
+      public Result<Map<P, T>> compute() {
+        return Result.create(Maps.newHashMap(), PsiModificationTracker.MODIFICATION_COUNT);
+      }
+    });
+    T result = cache.get(param);
+    if (result == null) {
+      result = f.fun(param);
+      cache.put(param, result);
+    }
+    return result;
+  }
+
+  /**
+   * Executes code only if <pre>_PYCHARM_VERBOSE_MODE</pre> is set in env (which should be done for debug purposes only)
+   * @param runnable code to call
+   */
+  public static void verboseOnly(@NotNull final Runnable runnable) {
+    if (System.getenv().get("_PYCHARM_VERBOSE_MODE") != null) {
+      runnable.run();
+    }
   }
 
   public static class KnownDecoratorProviderHolder {

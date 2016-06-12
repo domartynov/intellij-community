@@ -19,7 +19,6 @@ import com.intellij.CommonBundle;
 import com.intellij.ide.actions.ShowSettingsUtilImpl;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
-import com.intellij.openapi.application.TransactionGuard;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.help.HelpManager;
 import com.intellij.openapi.options.BaseConfigurable;
@@ -125,12 +124,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
 
   @Override
   public void show() {
-    DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, new Runnable() {
-      @Override
-      public void run() {
-        SingleConfigurableEditor.super.show();
-      }
-    });
+    DumbService.allowStartingDumbModeInside(DumbModePermission.MAY_START_BACKGROUND, () -> SingleConfigurableEditor.super.show());
   }
 
   public Configurable getConfigurable() {
@@ -230,12 +224,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
       };
 
       // invokeLater necessary to make sure dialog is already shown so we calculate modality state correctly.
-      SwingUtilities.invokeLater(new Runnable() {
-        @Override
-        public void run() {
-          addUpdateRequest(updateRequest);
-        }
-      });
+      SwingUtilities.invokeLater(() -> addUpdateRequest(updateRequest));
     }
 
     private void addUpdateRequest(final Runnable updateRequest) {
@@ -289,7 +278,7 @@ public class SingleConfigurableEditor extends DialogWrapper {
     myConfigurable = null;
 
     if (mySaveAllOnClose) {
-      TransactionGuard.submitTransaction(ApplicationManager.getApplication()::saveAll);
+      ApplicationManager.getApplication().saveAll();
     }
   }
 }

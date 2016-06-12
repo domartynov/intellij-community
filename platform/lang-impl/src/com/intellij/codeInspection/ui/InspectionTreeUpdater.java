@@ -16,11 +16,12 @@
 package com.intellij.codeInspection.ui;
 
 import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.util.ui.tree.TreeUtil;
 import com.intellij.util.ui.update.MergingUpdateQueue;
 import com.intellij.util.ui.update.Update;
+import org.jetbrains.annotations.Nullable;
 
 import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreeNode;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -36,42 +37,43 @@ public class InspectionTreeUpdater {
     myUpdateQueue = new MergingUpdateQueue("InspectionView", 100, true, view, view);
   }
 
-  public void updateWithPreviewPanel() {
-    update(false);
-    myDoUpdatePreviewPanel.compareAndSet(false, true);
+  public void updateWithPreviewPanel(@Nullable TreeNode node) {
+    myDoUpdatePreviewPanel.set(true);
+    update(node, false);
   }
 
-  public void update(boolean force) {
+  public void update(@Nullable TreeNode node, boolean force) {
     if (ApplicationManager.getApplication().isDispatchThread() && !force) {
       return;
     }
-    myUpdateQueue.queue(new Update("TreeRepaint") {
-      @Override
-      public void run() {
-        if (myView.isDisposed()) return;
-        final InspectionTree tree = myView.getTree();
-        try {
-          tree.setQueueUpdate(true);
-          ((DefaultTreeModel)tree.getModel()).reload();
-          tree.revalidate();
-          tree.repaint();
-          tree.restoreExpansionAndSelection();
-          if (myDoUpdatePreviewPanel.compareAndSet(true, false)) {
-            myView.updateRightPanelLoading();
-          }
-        } finally {
-          tree.setQueueUpdate(false);
-          if (tree.getSelectionModel().getMinSelectionRow() == -1) {
-            TreeUtil.selectFirstNode(tree);
-            tree.expandRow(0);
-          }
-        }
-      }
+    myUpdateQueue.queue(new MyTreeUpdate());
+  }
 
-      @Override
-      public boolean canEat(Update update) {
-        return true;
+  private class MyTreeUpdate extends Update {
+    public MyTreeUpdate() {
+      super("inspection.view.update");
+    }
+
+    @Override
+    public void run() {
+      if (myView.isDisposed()) return;
+      final InspectionTree tree = myView.getTree();
+      try {
+        tree.setQueueUpdate(true);
+        ((DefaultTreeModel)tree.getModel()).reload();
+        tree.restoreExpansionAndSelection(true);
+        myView.openRightPanelIfNeed();
+        if (myDoUpdatePreviewPanel.compareAndSet(true, false)) {
+          myView.updateRightPanelLoading();
+        }
+      } finally {
+        tree.setQueueUpdate(false);
       }
-    });
+    }
+
+    @Override
+    public boolean canEat(Update update) {
+      return true;
+    }
   }
 }

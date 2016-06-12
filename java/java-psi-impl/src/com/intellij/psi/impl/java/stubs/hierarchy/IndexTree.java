@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,13 @@
 package com.intellij.psi.impl.java.stubs.hierarchy;
 
 
+import com.intellij.openapi.util.registry.Registry;
+
 import java.util.Arrays;
 
 public class IndexTree {
+  public static final boolean STUB_HIERARCHY_ENABLED = Registry.is("java.hierarchy.service");
+
   public final static int PACKAGE = 1 << 0;
   public final static int CLASS = 1 << 1;
   public static final int STATIC       = 1 << 3;
@@ -28,20 +32,16 @@ public class IndexTree {
   public static final int COMPILED     = 1 << 7;
   public static final int MEMBER       = 1 << 8;
 
-  public static byte BYTECODE = 0;
-  public static byte JAVA = 1;
-  public static byte GROOVY = 2;
+  public static final byte BYTECODE = 0;
+  public static final byte JAVA = 1;
+  public static final byte GROOVY = 2;
 
   public static class Unit {
-    public final int myFileId;
-    public final String myPackageId;
     public final byte myUnitType;
     public final Import[] imports;
     public final ClassDecl[] myDecls;
 
-    public Unit(int fileId, String packageId, byte unitType, Import[] imports, ClassDecl[] decls) {
-      this.myFileId = fileId;
-      this.myPackageId = packageId;
+    public Unit(byte unitType, Import[] imports, ClassDecl[] decls) {
       this.myUnitType = unitType;
       this.imports = imports;
       this.myDecls = decls;
@@ -54,8 +54,6 @@ public class IndexTree {
 
       Unit unit = (Unit)o;
 
-      if (myFileId != unit.myFileId) return false;
-      if (myPackageId != null ? !myPackageId.equals(unit.myPackageId) : unit.myPackageId != null) return false;
       if (!Arrays.equals(imports, unit.imports)) return false;
       if (!Arrays.equals(myDecls, unit.myDecls)) return false;
 
@@ -64,11 +62,7 @@ public class IndexTree {
 
     @Override
     public int hashCode() {
-      int result = myFileId;
-      result = 31 * result + (myPackageId != null ? myPackageId.hashCode() : 0);
-      result = 31 * result + Arrays.hashCode(imports);
-      result = 31 * result + Arrays.hashCode(myDecls);
-      return result;
+      return Arrays.hashCode(myDecls);
     }
   }
 
@@ -129,6 +123,7 @@ public class IndexTree {
 
     public ClassDecl(int stubId, int mods, String name, String[] supers, Decl[] decls) {
       super(decls);
+      assert stubId > 0;
       this.myStubId = stubId;
       this.myMods = mods;
       this.myName = name;
@@ -154,8 +149,6 @@ public class IndexTree {
       int result = myStubId;
       result = 31 * result + myMods;
       result = 31 * result + (myName != null ? myName.hashCode() : 0);
-      result = 31 * result + Arrays.hashCode(mySupers);
-      result = 31 * result + Arrays.hashCode(myDecls);
       return result;
     }
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ class ChameleonSyntaxHighlightingPass extends TextEditorHighlightingPass {
 
     myEditor = editor;
 
-    TextRange range = VisibleHighlightingPassFactory.calculateVisibleRange(myEditor);
+    TextRange range = file.getTextRange();
     myStartOffset = range.getStartOffset();
     myEndOffset = range.getEndOffset();
 
@@ -97,12 +97,7 @@ class ChameleonSyntaxHighlightingPass extends TextEditorHighlightingPass {
     TextAttributes defaultAttrs = scheme.getAttributes(HighlighterColors.TEXT);
 
     SyntaxTraverser<PsiElement> s = psiTraverser(myFile).
-      expand(compose(psiApi().TO_RANGE(), new Condition<TextRange>() {
-        @Override
-        public boolean value(TextRange range) {
-          return range.intersects(myStartOffset, myEndOffset);
-        }
-      })).filterTypes(instanceOf(ILazyParseableElementType.class)).filterTypes(notInstanceOf(IFileElementType.class));
+      expand(compose(psiApi().TO_RANGE(), range -> range.intersects(myStartOffset, myEndOffset))).filterTypes(instanceOf(ILazyParseableElementType.class)).filterTypes(notInstanceOf(IFileElementType.class));
     List<HighlightInfo> infos = ContainerUtil.newArrayList();
 
 

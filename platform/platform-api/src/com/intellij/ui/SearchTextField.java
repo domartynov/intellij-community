@@ -28,6 +28,7 @@ import com.intellij.openapi.ui.popup.JBPopupFactory;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.components.JBList;
+import com.intellij.ui.components.JBTextField;
 import com.intellij.util.ReflectionUtil;
 import com.intellij.util.ui.JBInsets;
 import com.intellij.util.ui.UIUtil;
@@ -319,7 +320,7 @@ public class SearchTextField extends JPanel {
     getTextEditor().selectAll();
   }
 
-  public JTextField getTextEditor() {
+  public JBTextField getTextEditor() {
     return myTextField;
   }
 
@@ -415,15 +416,13 @@ public class SearchTextField extends JPanel {
   }
 
   protected Runnable createItemChosenCallback(final JList list) {
-    return new Runnable() {
-      public void run() {
-        final String value = (String)list.getSelectedValue();
-        getTextEditor().setText(value != null ? value : "");
-        addCurrentTextToHistory();
-        if (myPopup != null) {
-          myPopup.cancel();
-          myPopup = null;
-        }
+    return () -> {
+      final String value = (String)list.getSelectedValue();
+      getTextEditor().setText(value != null ? value : "");
+      addCurrentTextToHistory();
+      if (myPopup != null) {
+        myPopup.cancel();
+        myPopup = null;
       }
     };
   }
@@ -463,7 +462,7 @@ public class SearchTextField extends JPanel {
     return myModel.myFullList.indexOf(getText());
   }
 
-  protected static class TextFieldWithProcessing extends JTextField {
+  protected static class TextFieldWithProcessing extends JBTextField {
     public void processKeyEvent(KeyEvent e) {
       super.processKeyEvent(e);
     }

@@ -34,8 +34,6 @@ import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiElement;
-import com.intellij.util.BooleanFunction;
-import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -46,9 +44,7 @@ import org.jetbrains.plugins.gradle.util.GradleConstants;
 
 import java.util.List;
 
-import static org.jetbrains.plugins.gradle.settings.GradleSystemRunningSettings.PreferredTestRunner.CHOOSE_PER_TEST;
-import static org.jetbrains.plugins.gradle.settings.GradleSystemRunningSettings.PreferredTestRunner.GRADLE_TEST_RUNNER;
-import static org.jetbrains.plugins.gradle.settings.GradleSystemRunningSettings.PreferredTestRunner.PLATFORM_TEST_RUNNER;
+import static org.jetbrains.plugins.gradle.settings.GradleSystemRunningSettings.PreferredTestRunner.*;
 
 /**
  * @author Vladislav.Soroka
@@ -159,13 +155,9 @@ public abstract class GradleTestRunConfigurationProducer extends RunConfiguratio
       if (sourceSetId == null) return ContainerUtil.emptyList();
 
       final DataNode<TaskData> taskNode =
-        ExternalSystemApiUtil.find(moduleNode, ProjectKeys.TASK, new BooleanFunction<DataNode<TaskData>>() {
-          @Override
-          public boolean fun(DataNode<TaskData> node) {
-            return GradleCommonClassNames.GRADLE_API_TASKS_TESTING_TEST.equals(node.getData().getType()) &&
-                   StringUtil.startsWith(sourceSetId, node.getData().getName());
-          }
-        });
+        ExternalSystemApiUtil.find(moduleNode, ProjectKeys.TASK,
+                                   node -> GradleCommonClassNames.GRADLE_API_TASKS_TESTING_TEST.equals(node.getData().getType()) &&
+                                                                  StringUtil.startsWith(sourceSetId, node.getData().getName()));
 
       if (taskNode == null) return ContainerUtil.emptyList();
       final String taskName = taskNode.getData().getName();
@@ -181,11 +173,6 @@ public abstract class GradleTestRunConfigurationProducer extends RunConfiguratio
       final String join = StringUtil.join(pathParts, ":");
       path = ":" + join + (!join.isEmpty() ? ":" : "");
     }
-    return ContainerUtil.map(result, new Function<String, String>() {
-      @Override
-      public String fun(String s) {
-        return path + s;
-      }
-    });
+    return ContainerUtil.map(result, s -> path + s);
   }
 }

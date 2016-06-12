@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -167,7 +167,7 @@ public class PsiBuilderImpl extends UserDataHolderBase implements PsiBuilder {
                          @NotNull TokenSet comments,
                          @NotNull Lexer lexer,
                          CharTable charTable,
-                         @NotNull final CharSequence text,
+                         @NotNull CharSequence text,
                          @Nullable ASTNode originalTree,
                          @Nullable CharSequence lastCommittedText,
                          @Nullable MyTreeStructure parentLightTree,
@@ -1145,13 +1145,15 @@ public class PsiBuilderImpl extends UserDataHolderBase implements PsiBuilder {
       throw new BlockSupport.ReparsedSuccessfullyException(diffLog);
     }
 
-    final ASTNode rootNode = createRootAST(rootMarker);
+    final TreeElement rootNode = createRootAST(rootMarker);
     bind(rootMarker, (CompositeElement)rootNode);
 
     if (isTooDeep && !(rootNode instanceof FileElement)) {
       final ASTNode childNode = rootNode.getFirstChildNode();
       childNode.putUserData(BlockSupport.TREE_DEPTH_LIMIT_EXCEEDED, Boolean.TRUE);
     }
+
+    assert rootNode.textMatches(myText) : rootNode.getElementType();
 
     return rootNode;
   }
@@ -1164,10 +1166,10 @@ public class PsiBuilderImpl extends UserDataHolderBase implements PsiBuilder {
   }
 
   @NotNull
-  private ASTNode createRootAST(@NotNull StartMarker rootMarker) {
+  private TreeElement createRootAST(@NotNull StartMarker rootMarker) {
     final IElementType type = rootMarker.getTokenType();
     @SuppressWarnings("NullableProblems")
-    final ASTNode rootNode = type instanceof ILazyParseableElementType ?
+    final TreeElement rootNode = type instanceof ILazyParseableElementType ?
                              ASTFactory.lazy((ILazyParseableElementType)type, null) : createComposite(rootMarker);
     if (myCharTable == null) {
       myCharTable = rootNode instanceof FileElement ? ((FileElement)rootNode).getCharTable() : new CharTableImpl();
@@ -1766,8 +1768,8 @@ public class PsiBuilderImpl extends UserDataHolderBase implements PsiBuilder {
                             boolean forceInsertion) {
       final int start = builder.myLexStarts[startLexemeIndex];
       final int end = builder.myLexStarts[endLexemeIndex];
-      /** Corresponding code for heavy tree is located in {@link com.intellij.lang.impl.PsiBuilderImpl#insertLeaves}
-       *  and is applied only to plain lexemes */
+      /* Corresponding code for heavy tree is located in {@link com.intellij.lang.impl.PsiBuilderImpl#insertLeaves}
+         and is applied only to plain lexemes */
       if (start > end || !forceInsertion && start == end && !(type instanceof ILeafElementType)) {
         return;
       }

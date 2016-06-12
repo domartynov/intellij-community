@@ -24,6 +24,7 @@ import com.intellij.openapi.actionSystem.ex.ActionUtil;
 import com.intellij.openapi.actionSystem.impl.PresentationFactory;
 import com.intellij.openapi.keymap.Keymap;
 import com.intellij.openapi.keymap.KeymapManager;
+import com.intellij.openapi.keymap.impl.ui.MouseShortcutPanel;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.wm.IdeFocusManager;
@@ -33,6 +34,7 @@ import com.intellij.openapi.wm.impl.IdeGlassPaneImpl;
 import com.intellij.util.ReflectionUtil;
 import com.intellij.util.containers.HashMap;
 import com.intellij.util.ui.UIUtil;
+import org.intellij.lang.annotations.JdkConstants;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -44,6 +46,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import static com.intellij.ui.components.JBScrollPane.isScrollEvent;
 import static java.awt.event.MouseEvent.*;
 
 /**
@@ -55,12 +58,24 @@ import static java.awt.event.MouseEvent.*;
  */
 public final class IdeMouseEventDispatcher {
   private final PresentationFactory myPresentationFactory = new PresentationFactory();
-  private final ArrayList<AnAction> myActions = new ArrayList<AnAction>(1);
-  private final Map<Container, BlockState> myRootPane2BlockedId = new HashMap<Container, BlockState>();
-  private int myLastHorScrolledComponentHash = 0;
+  private final ArrayList<AnAction> myActions = new ArrayList<>(1);
+  private final Map<Container, BlockState> myRootPane2BlockedId = new HashMap<>();
+  private int myLastHorScrolledComponentHash;
   private boolean myPressedModifiersStored;
+  @JdkConstants.InputEventMask
   private int myModifiers;
+  @JdkConstants.InputEventMask
   private int myModifiersEx;
+
+  private static boolean myForceTouchIsAllowed = true;
+
+  public static void forbidForceTouch () {
+    myForceTouchIsAllowed = false;
+  }
+
+  public static boolean isForceTouchAllowed () {
+    return myForceTouchIsAllowed;
+  }
 
   // Don't compare MouseEvent ids. Swing has wrong sequence of events: first is mouse_clicked(500)
   // then mouse_pressed(501), mouse_released(502) etc. Here, mouse events sorted so we can compare
@@ -169,7 +184,9 @@ public final class IdeMouseEventDispatcher {
       ignore = true;
     }
 
+    @JdkConstants.InputEventMask
     int modifiers = e.getModifiers();
+    @JdkConstants.InputEventMask
     int modifiersEx = e.getModifiersEx();
     if (e.getID() == MOUSE_PRESSED) {
       myPressedModifiersStored = true;
@@ -177,6 +194,7 @@ public final class IdeMouseEventDispatcher {
       myModifiersEx = modifiersEx;
     }
     else if (e.getID() == MOUSE_RELEASED) {
+      myForceTouchIsAllowed = true;
       if (myPressedModifiersStored) {
         myPressedModifiersStored = false;
         modifiers = myModifiers;
@@ -215,6 +233,10 @@ public final class IdeMouseEventDispatcher {
       return false;
     }
 
+    if (c instanceof MouseShortcutPanel || c.getParent() instanceof MouseShortcutPanel) {
+      return false; // forward mouse processing to the special shortcut panel
+    }
+
     if (isHorizontalScrolling(c, e)) {
       boolean done = doHorizontalScrolling(c, (MouseWheelEvent)e);
       if (done) return true;
@@ -250,8 +272,6 @@ public final class IdeMouseEventDispatcher {
           e.consume();
         }
       }
-      if (actions.length > 0 && e.isConsumed())
-        return true;
     }
     return e.getButton() > 3;
   }
@@ -306,6 +326,7 @@ public final class IdeMouseEventDispatcher {
       final MouseWheelEvent mwe = (MouseWheelEvent)e;
       return mwe.isShiftDown()
              && mwe.getScrollType() == MouseWheelEvent.WHEEL_UNIT_SCROLL
+             && isScrollEvent(mwe)
              && findHorizontalScrollBar(c) != null;
     }
     return false;

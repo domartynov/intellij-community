@@ -22,6 +22,7 @@ package com.intellij.codeInspection.ex;
 
 import com.intellij.codeInspection.CommonProblemDescriptor;
 import com.intellij.codeInspection.QuickFix;
+import com.intellij.codeInspection.offlineViewer.OfflineRefElementNode;
 import com.intellij.codeInspection.reference.RefEntity;
 import com.intellij.codeInspection.ui.*;
 import com.intellij.openapi.diagnostic.Logger;
@@ -38,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
 import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
 import java.util.*;
-import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 
 public abstract class InspectionRVContentProvider {
   private static final Logger LOG = Logger.getInstance("#" + InspectionRVContentProvider.class.getName());
@@ -76,17 +77,17 @@ public abstract class InspectionRVContentProvider {
     final TreePath[] treePaths = tree.getSelectionPaths();
     if (treePaths == null) return false;
     for (TreePath selectionPath : treePaths) {
-      if (!TreeUtil.traverseDepth((TreeNode)selectionPath.getLastPathComponent(), new TreeUtil.Traverse() {
-        @Override
-        public boolean accept(final Object node) {
-          if (!((InspectionTreeNode)node).isValid()) return true;
-          if (node instanceof ProblemDescriptionNode) {
-            final CommonProblemDescriptor descriptor = ((ProblemDescriptionNode)node).getDescriptor();
+      if (!TreeUtil.traverseDepth((TreeNode)selectionPath.getLastPathComponent(), node -> {
+        if (!((InspectionTreeNode) node).isValid()) return true;
+        if (node instanceof ProblemDescriptionNode) {
+          ProblemDescriptionNode problemDescriptionNode = (ProblemDescriptionNode)node;
+          if (!problemDescriptionNode.isQuickFixAppliedFromView()) {
+            final CommonProblemDescriptor descriptor = problemDescriptionNode.getDescriptor();
             final QuickFix[] fixes = descriptor != null ? descriptor.getFixes() : null;
             return fixes == null || fixes.length == 0;
           }
-          return true;
         }
+        return true;
       })) {
         return true;
       }
@@ -98,23 +99,25 @@ public abstract class InspectionRVContentProvider {
   public abstract QuickFixAction[] getQuickFixes(@NotNull InspectionToolWrapper toolWrapper, @NotNull InspectionTree tree);
 
 
-  public void appendToolNodeContent(@NotNull GlobalInspectionContextImpl context,
-                                    @NotNull InspectionNode toolNode,
-                                    @NotNull InspectionTreeNode parentNode,
-                                    final boolean showStructure) {
+  public InspectionNode appendToolNodeContent(@NotNull GlobalInspectionContextImpl context,
+                                              @NotNull InspectionNode toolNode,
+                                              @NotNull InspectionTreeNode parentNode,
+                                              boolean showStructure,
+                                              boolean groupBySeverity) {
     InspectionToolWrapper wrapper = toolNode.getToolWrapper();
     InspectionToolPresentation presentation = context.getPresentation(wrapper);
     Map<String, Set<RefEntity>> content = presentation.getContent();
     Map<RefEntity, CommonProblemDescriptor[]> problems = presentation.getProblemElements();
-    appendToolNodeContent(context, toolNode, parentNode, showStructure, content, problems);
+    return appendToolNodeContent(context, toolNode, parentNode, showStructure, groupBySeverity, content, problems);
   }
 
-  public abstract void appendToolNodeContent(@NotNull GlobalInspectionContextImpl context,
-                                             @NotNull InspectionNode toolNode,
-                                             @NotNull InspectionTreeNode parentNode,
-                                             final boolean showStructure,
-                                             @NotNull Map<String, Set<RefEntity>> contents,
-                                             @NotNull Map<RefEntity, CommonProblemDescriptor[]> problems);
+  public abstract InspectionNode appendToolNodeContent(@NotNull GlobalInspectionContextImpl context,
+                                                           @NotNull InspectionNode toolNode,
+                                                           @NotNull InspectionTreeNode parentNode,
+                                                           final boolean showStructure,
+                                                           boolean groupBySeverity,
+                                                           @NotNull Map<String, Set<RefEntity>> contents,
+                                                           @NotNull Map<RefEntity, CommonProblemDescriptor[]> problems);
 
   protected abstract void appendDescriptor(@NotNull GlobalInspectionContextImpl context,
                                            @NotNull InspectionToolWrapper toolWrapper,
@@ -132,7 +135,7 @@ public abstract class InspectionRVContentProvider {
                                @NotNull InspectionToolWrapper toolWrapper,
                                @NotNull Function<T, UserObjectContainer<T>> computeContainer,
                                final boolean showStructure,
-                               final Consumer<InspectionTreeNode> createdNodesConsumer) {
+                               final UnaryOperator<InspectionTreeNode> createdNodesConsumer) {
     final Map<String, Map<String, InspectionPackageNode>> module2PackageMap = new HashMap<String, Map<String, InspectionPackageNode>>();
     boolean supportStructure = showStructure;
     final MultiMap<InspectionPackageNode, UserObjectContainer<T>> packageDescriptors = new MultiMap<>();
@@ -169,6 +172,7 @@ public abstract class InspectionRVContentProvider {
             if (module != null) {
               moduleNode = new InspectionModuleNode(module);
               moduleNodes.put(moduleName, moduleNode);
+              moduleNode = (InspectionModuleNode)createdNodesConsumer.apply(moduleNode);
             }
             else { //module content was removed ?
               continue;
@@ -176,18 +180,21 @@ public abstract class InspectionRVContentProvider {
           }
           else {
             for (InspectionPackageNode packageNode : packageNodes.values()) {
-              createdNodesConsumer.accept(packageNode);
+              createdNodesConsumer.apply(packageNode);
               for (UserObjectContainer<T> container : packageDescriptors.get(packageNode)) {
                 appendDescriptor(context, toolWrapper, container, packageNode, canPackageRepeat);
               }
             }
             continue;
           }
+        } else {
+          moduleNode = (InspectionModuleNode)createdNodesConsumer.apply(moduleNode);
         }
         for (InspectionPackageNode packageNode : packageNodes.values()) {
           if (packageNode.getPackageName() != null) {
-            insertByIndex(packageNode, moduleNode);
-            for (UserObjectContainer<T> container : packageDescriptors.get(packageNode)) {
+            Collection<UserObjectContainer<T>> objectContainers = packageDescriptors.get(packageNode);
+            packageNode = (InspectionPackageNode)merge(packageNode, moduleNode, true);
+            for (UserObjectContainer<T> container : objectContainers) {
               appendDescriptor(context, toolWrapper, container, packageNode, canPackageRepeat);
             }
           }
@@ -197,7 +204,6 @@ public abstract class InspectionRVContentProvider {
             }
           }
         }
-        createdNodesConsumer.accept(moduleNode);
       }
     }
     else {
@@ -213,7 +219,7 @@ public abstract class InspectionRVContentProvider {
           }
           for (TreeNode childNode: childNodes) {
             if (childNode instanceof ProblemDescriptionNode) {
-              createdNodesConsumer.accept(pNode);
+              createdNodesConsumer.apply(pNode);
               break;
             }
             LOG.assertTrue(childNode instanceof RefElementNode, childNode.getClass().getName());
@@ -233,7 +239,7 @@ public abstract class InspectionRVContentProvider {
                 parentNodes.add((RefElementNode)grandChildNode);
               }
               if (!hasElementNodeUnder) {
-                createdNodesConsumer.accept(elementNode);
+                createdNodesConsumer.apply(elementNode);
                 continue;
               }
             }
@@ -255,7 +261,7 @@ public abstract class InspectionRVContentProvider {
               }
             }
             for (RefElementNode node : parentNodes) {
-              createdNodesConsumer.accept(node);
+              createdNodesConsumer.apply(node);
             }
           }
         }
@@ -281,14 +287,14 @@ public abstract class InspectionRVContentProvider {
           if (node instanceof RefElementNode) {
             final RefElementNode refElementNode = (RefElementNode)node;
             final Object userObject = finalContainer.getUserObject();
-            final Object object = refElementNode.getUserObject();
+            final Object object = node instanceof OfflineRefElementNode ? ((OfflineRefElementNode) refElementNode).getOfflineDescriptor() : refElementNode.getUserObject();
             if ((object == null || userObject.getClass().equals(object.getClass())) && finalContainer.areEqual(object, userObject)) {
               if (firstLevel.get()) {
                 result.set(refElementNode);
                 return false;
               }
               else {
-                insertByIndex(finalPrevNode, refElementNode);
+                refElementNode.insertByOrder(finalPrevNode, false);
                 result.set(nodeToBeAdded);
                 return false;
               }
@@ -300,11 +306,11 @@ public abstract class InspectionRVContentProvider {
       if(!result.isNull()) return result.get();
 
       if (!firstLevel.get()) {
-        insertByIndex(prevNode, currentNode);
+        currentNode.insertByOrder(prevNode, false);
       }
       final UserObjectContainer owner = container.getOwner();
       if (owner == null) {
-        insertByIndex(currentNode, parentNode);
+        parentNode.insertByOrder(currentNode, false);
         return nodeToBeAdded;
       }
       container = owner;
@@ -314,7 +320,7 @@ public abstract class InspectionRVContentProvider {
   }
 
   @SuppressWarnings({"ConstantConditions"}) //class cast suppression
-  protected static void merge(InspectionTreeNode child, InspectionTreeNode parent, boolean merge) {
+  public static InspectionTreeNode merge(InspectionTreeNode child, InspectionTreeNode parent, boolean merge) {
     if (merge) {
       for (int i = 0; i < parent.getChildCount(); i++) {
         InspectionTreeNode current = (InspectionTreeNode)parent.getChildAt(i);
@@ -324,42 +330,30 @@ public abstract class InspectionRVContentProvider {
         if (current instanceof InspectionPackageNode) {
           if (((InspectionPackageNode)current).getPackageName().compareTo(((InspectionPackageNode)child).getPackageName()) == 0) {
             processDepth(child, current);
-            return;
+            return current;
           }
         }
         else if (current instanceof RefElementNode) {
-          if (((RefElementNode)current).getElement().getName().compareTo(((RefElementNode)child).getElement().getName()) == 0 &&
-              ((RefElementNode)current).getElement().getQualifiedName().compareTo(((RefElementNode)child).getElement().getQualifiedName()) == 0) {
+          if (InspectionResultsViewComparator.getInstance().compare(current, child) == 0) {
             processDepth(child, current);
-            return;
+            return current;
           }
         }
         else if (current instanceof InspectionNode) {
           if (((InspectionNode)current).getToolWrapper().getShortName().compareTo(((InspectionNode)child).getToolWrapper().getShortName()) == 0) {
             processDepth(child, current);
-            return;
+            return current;
           }
         }
         else if (current instanceof InspectionModuleNode) {
           if (((InspectionModuleNode)current).getName().compareTo(((InspectionModuleNode)child).getName()) == 0) {
             processDepth(child, current);
-            return;
+            return current;
           }
         }
       }
     }
-    insertByIndex(child, parent);
-  }
-
-  public static void insertByIndex(InspectionTreeNode child, InspectionTreeNode parent) {
-    if (parent.getIndex(child) != -1) {
-      return;
-    }
-    final int i = TreeUtil.indexedBinarySearch(parent, child, InspectionResultsViewComparator.getInstance());
-    if (i >= 0){
-      return;
-    }
-    parent.insert(child, -i -1);
+    return parent.insertByOrder(child, false);
   }
 
   private static void processDepth(final InspectionTreeNode child, final InspectionTreeNode current) {

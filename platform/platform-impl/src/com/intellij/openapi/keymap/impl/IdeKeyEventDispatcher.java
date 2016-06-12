@@ -1,5 +1,5 @@
 /*
- * Copyright 2000-2015 JetBrains s.r.o.
+ * Copyright 2000-2016 JetBrains s.r.o.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -57,8 +57,8 @@ import com.intellij.ui.components.JBOptionButton;
 import com.intellij.ui.popup.list.ListPopupImpl;
 import com.intellij.ui.speedSearch.SpeedSearchSupply;
 import com.intellij.util.Alarm;
-import com.intellij.util.Processor;
 import com.intellij.util.containers.ContainerUtil;
+import com.intellij.util.ui.KeyboardLayoutUtil;
 import com.intellij.util.ui.MacUIUtil;
 import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NonNls;
@@ -107,14 +107,11 @@ public final class IdeKeyEventDispatcher implements Disposable {
   private final IdeEventQueue myQueue;
 
   private final Alarm mySecondStrokeTimeout = new Alarm();
-  private final Runnable mySecondStrokeTimeoutRunnable = new Runnable() {
-    @Override
-    public void run() {
-      if (myState == KeyState.STATE_WAIT_FOR_SECOND_KEYSTROKE) {
-        resetState();
-        final DataContext dataContext = myContext.getDataContext();
-        StatusBar.Info.set(null, dataContext == null ? null : CommonDataKeys.PROJECT.getData(dataContext));
-      }
+  private final Runnable mySecondStrokeTimeoutRunnable = () -> {
+    if (myState == KeyState.STATE_WAIT_FOR_SECOND_KEYSTROKE) {
+      resetState();
+      final DataContext dataContext = myContext.getDataContext();
+      StatusBar.Info.set(null, dataContext == null ? null : CommonDataKeys.PROJECT.getData(dataContext));
     }
   };
 
@@ -136,8 +133,9 @@ public final class IdeKeyEventDispatcher implements Disposable {
    */
   public boolean dispatchKeyEvent(final KeyEvent e){
     if (myDisposed) return false;
+    KeyboardLayoutUtil.storeAsciiForChar(e);
 
-    if(e.isConsumed()){
+    if (e.isConsumed()) {
       return false;
     }
 
@@ -272,7 +270,6 @@ public final class IdeKeyEventDispatcher implements Disposable {
       return false;
     }
 
-    boolean isMainFrame = window instanceof IdeFrameImpl;
     boolean isFloatingDecorator = window instanceof FloatingDecorator;
 
     boolean isPopup = !(component instanceof JFrame) && !(component instanceof JDialog);
@@ -285,7 +282,7 @@ public final class IdeKeyEventDispatcher implements Disposable {
       }
     }
 
-    return !isMainFrame && !isFloatingDecorator;
+    return !isFloatingDecorator;
   }
 
   private boolean inWaitForSecondStrokeState() {
@@ -465,13 +462,10 @@ public final class IdeKeyEventDispatcher implements Disposable {
         mySecondKeystrokePopupTimeout.cancelAllRequests();
         if (secondKeyStrokes.size() > 1) {
           final DataContext oldContext = myContext.getDataContext();
-          mySecondKeystrokePopupTimeout.addRequest(new Runnable() {
-            @Override
-            public void run() {
-              if (myState == KeyState.STATE_WAIT_FOR_SECOND_KEYSTROKE) {
-                StatusBar.Info.set(null, CommonDataKeys.PROJECT.getData(oldContext));
-                new SecondaryKeystrokePopup(myFirstKeyStroke, secondKeyStrokes, oldContext).showInBestPositionFor(oldContext);
-              }
+          mySecondKeystrokePopupTimeout.addRequest(() -> {
+            if (myState == KeyState.STATE_WAIT_FOR_SECOND_KEYSTROKE) {
+              StatusBar.Info.set(null, CommonDataKeys.PROJECT.getData(oldContext));
+              new SecondaryKeystrokePopup(myFirstKeyStroke, secondKeyStrokes, oldContext).showInBestPositionFor(oldContext);
             }
           }, Registry.intValue("actionSystem.secondKeystrokePopupTimeout"));
         }
@@ -594,12 +588,7 @@ public final class IdeKeyEventDispatcher implements Disposable {
       }
 
       if (Registry.is("actionSystem.fixLostTyping")) {
-        IdeEventQueue.getInstance().doWhenReady(new Runnable() {
-          @Override
-          public void run() {
-            IdeEventQueue.getInstance().getKeyEventDispatcher().resetState();
-          }
-        });
+        IdeEventQueue.getInstance().doWhenReady(() -> IdeEventQueue.getInstance().getKeyEventDispatcher().resetState());
       }
     }
   };
@@ -641,7 +630,8 @@ public final class IdeKeyEventDispatcher implements Disposable {
         return true;
       }
 
-      processor.performAction(e, action, actionEvent);
+      ((TransactionGuardImpl)TransactionGuard.getInstance()).performUserActivity(
+        () -> processor.performAction(e, action, actionEvent));
       actionManager.fireAfterActionPerformed(action, actionEvent.getDataContext(), actionEvent);
       return true;
     }
@@ -655,13 +645,10 @@ public final class IdeKeyEventDispatcher implements Disposable {
 
   private static void showDumbModeWarningLaterIfNobodyConsumesEvent(final InputEvent e, final AnActionEvent... actionEvents) {
     if (ModalityState.current() == ModalityState.NON_MODAL) {
-        ApplicationManager.getApplication().invokeLater(new Runnable() {
-          @Override
-          public void run() {
-            if (e.isConsumed()) return;
+        ApplicationManager.getApplication().invokeLater(() -> {
+          if (e.isConsumed()) return;
 
-            ActionUtil.showDumbModeWarning(actionEvents);
-          }
+          ActionUtil.showDumbModeWarning(actionEvents);
         });
       }
   }
@@ -751,7 +738,7 @@ public final class IdeKeyEventDispatcher implements Disposable {
       final List<AnAction> readOnlyActions = Collections.unmodifiableList(actions);
       for (ActionPromoter promoter : ActionPromoter.EP_NAME.getExtensions()) {
         final List<AnAction> promoted = promoter.promote(readOnlyActions, myContext.getDataContext());
-        if (promoted.isEmpty()) continue;
+        if (promoted == null || promoted.isEmpty()) continue;
 
         actions.removeAll(promoted);
         actions.addAll(0, promoted);
@@ -836,47 +823,43 @@ public final class IdeKeyEventDispatcher implements Disposable {
     }
 
     private void registerActions(@NotNull final KeyStroke firstKeyStroke, @NotNull final List<Pair<AnAction, KeyStroke>> actions, final DataContext ctx) {
-      ContainerUtil.process(actions, new Processor<Pair<AnAction, KeyStroke>>() {
-        @Override
-        public boolean process(final Pair<AnAction, KeyStroke> pair) {
-          final String actionText = pair.getFirst().getTemplatePresentation().getText();
-          final AbstractAction a = new AbstractAction() {
-            @Override
-            public void actionPerformed(final ActionEvent e) {
-              cancel();
-              invokeAction(pair.getFirst(), ctx);
-            }
-          };
-
-          final KeyStroke keyStroke = pair.getSecond();
-          if (keyStroke != null) {
-            registerAction(actionText, keyStroke, a);
-
-            if (keyStroke.getModifiers() == 0) {
-              // do a little trick here, so if I will press Command+R and the second keystroke is just 'R',
-              // I want to be able to hold the Command while pressing 'R'
-
-              final KeyStroke additionalKeyStroke = KeyStroke.getKeyStroke(keyStroke.getKeyCode(), firstKeyStroke.getModifiers());
-              final String _existing = getActionForKeyStroke(additionalKeyStroke);
-              if (_existing == null) registerAction("__additional__" + actionText, additionalKeyStroke, a);
-            }
+      ContainerUtil.process(actions, pair -> {
+        final String actionText = pair.getFirst().getTemplatePresentation().getText();
+        final AbstractAction a = new AbstractAction() {
+          @Override
+          public void actionPerformed(final ActionEvent e) {
+            cancel();
+            invokeAction(pair.getFirst(), ctx);
           }
+        };
 
-          return true;
+        final KeyStroke keyStroke = pair.getSecond();
+        if (keyStroke != null) {
+          registerAction(actionText, keyStroke, a);
+
+          if (keyStroke.getModifiers() == 0) {
+            // do a little trick here, so if I will press Command+R and the second keystroke is just 'R',
+            // I want to be able to hold the Command while pressing 'R'
+
+            final KeyStroke additionalKeyStroke = KeyStroke.getKeyStroke(keyStroke.getKeyCode(), firstKeyStroke.getModifiers());
+            final String _existing = getActionForKeyStroke(additionalKeyStroke);
+            if (_existing == null) registerAction("__additional__" + actionText, additionalKeyStroke, a);
+          }
         }
+
+        return true;
       });
     }
 
     private static void invokeAction(@NotNull final AnAction action, final DataContext ctx) {
-      ApplicationManager.getApplication().invokeLater(
-        () -> ((TransactionGuardImpl)TransactionGuard.getInstance()).performUserActivity(() -> {
+      TransactionGuard.submitTransaction(ApplicationManager.getApplication(), () -> {
           final AnActionEvent event =
             new AnActionEvent(null, ctx, ActionPlaces.UNKNOWN, action.getTemplatePresentation().clone(),
                               ActionManager.getInstance(), 0);
           if (ActionUtil.lastUpdateAndCheckDumb(action, event, true)) {
             ActionUtil.performActionDumbAware(action, event);
           }
-        }));
+        });
     }
 
     @Override
@@ -885,20 +868,17 @@ public final class IdeKeyEventDispatcher implements Disposable {
     }
 
     private static ListPopupStep buildStep(@NotNull final List<Pair<AnAction, KeyStroke>> actions, final DataContext ctx) {
-      return new BaseListPopupStep<Pair<AnAction, KeyStroke>>("Choose an action", ContainerUtil.findAll(actions, new Condition<Pair<AnAction, KeyStroke>>() {
-        @Override
-        public boolean value(Pair<AnAction, KeyStroke> pair) {
-          final AnAction action = pair.getFirst();
-          final Presentation presentation = action.getTemplatePresentation().clone();
-          AnActionEvent event = new AnActionEvent(null, ctx,
-                                                  ActionPlaces.UNKNOWN,
-                                                  presentation,
-                                                  ActionManager.getInstance(),
-                                                  0);
+      return new BaseListPopupStep<Pair<AnAction, KeyStroke>>("Choose an action", ContainerUtil.findAll(actions, pair -> {
+        final AnAction action = pair.getFirst();
+        final Presentation presentation = action.getTemplatePresentation().clone();
+        AnActionEvent event = new AnActionEvent(null, ctx,
+                                                ActionPlaces.UNKNOWN,
+                                                presentation,
+                                                ActionManager.getInstance(),
+                                                0);
 
-          ActionUtil.performDumbAwareUpdate(action, event, true);
-          return presentation.isEnabled() && presentation.isVisible();
-        }
+        ActionUtil.performDumbAwareUpdate(action, event, true);
+        return presentation.isEnabled() && presentation.isVisible();
       })) {
         @Override
         public PopupStep onChosen(Pair<AnAction, KeyStroke> selectedValue, boolean finalChoice) {
@@ -910,14 +890,16 @@ public final class IdeKeyEventDispatcher implements Disposable {
 
     private static class ActionListCellRenderer extends ColoredListCellRenderer {
       @Override
-      protected void customizeCellRenderer(final JList list, final Object value, final int index, final boolean selected, final boolean hasFocus) {
-        if (value == null) return;
+      protected void customizeCellRenderer(@NotNull final JList list, final Object value, final int index, final boolean selected, final boolean hasFocus) {
         if (value instanceof Pair) {
+          //noinspection unchecked
           final Pair<AnAction, KeyStroke> pair = (Pair<AnAction, KeyStroke>) value;
           append(KeymapUtil.getShortcutText(new KeyboardShortcut(pair.getSecond(), null)), SimpleTextAttributes.GRAY_ATTRIBUTES);
           appendTextPadding(30);
           final String text = pair.getFirst().getTemplatePresentation().getText();
-          append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES);
+          if (text != null) {
+            append(text, SimpleTextAttributes.REGULAR_ATTRIBUTES);
+          }
         }
       }
     }

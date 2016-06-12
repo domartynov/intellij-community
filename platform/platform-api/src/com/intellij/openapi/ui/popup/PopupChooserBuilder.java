@@ -21,9 +21,7 @@ import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.util.Computable;
 import com.intellij.openapi.util.Pair;
 import com.intellij.ui.*;
-import com.intellij.ui.awt.RelativePoint;
 import com.intellij.ui.components.JBScrollPane;
-import com.intellij.ui.components.JBViewport;
 import com.intellij.ui.speedSearch.ListWithFilter;
 import com.intellij.ui.treeStructure.treetable.TreeTable;
 import com.intellij.util.BooleanFunction;
@@ -214,12 +212,7 @@ public class PopupChooserBuilder {
     if (myChooserComponent instanceof JList) {
       list = (JList)myChooserComponent;
       myChooserComponent = ListWithFilter.wrap(list, new MyListWrapper(list), myItemsNamer);
-      keyEventHandler = new BooleanFunction<KeyEvent>() {
-        @Override
-        public boolean fun(KeyEvent keyEvent) {
-          return keyEvent.isConsumed();
-        }
-      };
+      keyEventHandler = keyEvent -> keyEvent.isConsumed();
     }
     else {
       list = null;
@@ -530,6 +523,18 @@ public class PopupChooserBuilder {
         return myList.getSelectedValues();
       }
       return null;
+    }
+
+    @Override
+    public Dimension getPreferredSize() {
+      if (isPreferredSizeSet()) {
+        return super.getPreferredSize();
+      }
+      Dimension size = myList.getPreferredSize();
+      size.height = Math.min(size.height, myList.getPreferredScrollableViewportSize().height);
+      JScrollBar bar = getVerticalScrollBar();
+      if (bar != null) size.width += bar.getPreferredSize().width;
+      return size;
     }
 
     public void setBorder(Border border) {

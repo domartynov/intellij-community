@@ -33,7 +33,6 @@ import com.intellij.profile.codeInspection.InspectionProjectProfileManager;
 import com.intellij.psi.*;
 import com.intellij.psi.util.PsiTreeUtil;
 import com.intellij.psi.util.QualifiedName;
-import com.intellij.util.Consumer;
 import com.intellij.util.PlatformUtils;
 import com.intellij.util.SmartList;
 import com.intellij.util.containers.ContainerUtil;
@@ -42,7 +41,6 @@ import com.jetbrains.python.PyCustomType;
 import com.jetbrains.python.PyNames;
 import com.jetbrains.python.codeInsight.PyCodeInsightSettings;
 import com.jetbrains.python.codeInsight.PyCustomMember;
-import com.jetbrains.python.codeInsight.PySubstitutionChunkReference;
 import com.jetbrains.python.codeInsight.PyFunctionTypeCommentReferenceContributor;
 import com.jetbrains.python.codeInsight.controlflow.ScopeOwner;
 import com.jetbrains.python.codeInsight.dataflow.scope.ScopeUtil;
@@ -62,6 +60,7 @@ import com.jetbrains.python.psi.*;
 import com.jetbrains.python.psi.impl.PyBuiltinCache;
 import com.jetbrains.python.psi.impl.PyImportStatementNavigator;
 import com.jetbrains.python.psi.impl.PyImportedModule;
+import com.jetbrains.python.psi.impl.PyPsiUtils;
 import com.jetbrains.python.psi.impl.references.PyImportReference;
 import com.jetbrains.python.psi.impl.references.PyOperatorReference;
 import com.jetbrains.python.psi.resolve.ImportedResolveResult;
@@ -658,10 +657,7 @@ public class PyUnresolvedReferencesInspection extends PyInspection {
           }
         }
       }
-      
-      if (reference instanceof PySubstitutionChunkReference && ((PySubstitutionChunkReference)reference).ignoreUnresolved()) {
-        return;        
-      }
+
       registerProblem(node, description, hl_type, null, rangeInElement, actions.toArray(new LocalQuickFix[actions.size()]));
     }
 
@@ -1014,11 +1010,7 @@ public class PyUnresolvedReferencesInspection extends PyInspection {
 
     private static void addPluginQuickFixes(PsiReference reference, final List<LocalQuickFix> actions) {
       for (PyUnresolvedReferenceQuickFixProvider provider : Extensions.getExtensions(PyUnresolvedReferenceQuickFixProvider.EP_NAME)) {
-        provider.registerQuickFixes(reference, new Consumer<LocalQuickFix>() {
-          public void consume(LocalQuickFix localQuickFix) {
-            actions.add(localQuickFix);
-          }
-        });
+        provider.registerQuickFixes(reference, localQuickFix -> actions.add(localQuickFix));
       }
     }
 
@@ -1158,9 +1150,8 @@ public class PyUnresolvedReferencesInspection extends PyInspection {
     public void optimizeImports() {
       final List<PsiElement> elementsToDelete = collectUnusedImportElements();
       for (PsiElement element : elementsToDelete) {
-        if (element.isValid()) {
-          element.delete();
-        }
+        PyPsiUtils.assertValid(element);
+        element.delete();
       }
     }
   }

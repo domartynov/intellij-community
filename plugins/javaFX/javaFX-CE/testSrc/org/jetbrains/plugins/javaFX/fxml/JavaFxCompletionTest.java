@@ -80,6 +80,10 @@ public class JavaFxCompletionTest extends LightFixtureCompletionTestCase {
     doTest();
   }
 
+  public void testEnumConstantValue() throws Exception {
+    doTest("TOP_LEFT");
+  }
+
   public void testConstants() throws Exception {
     doTest("NEGATIVE_INFINITY");
   }
@@ -133,57 +137,53 @@ public class JavaFxCompletionTest extends LightFixtureCompletionTestCase {
   }
 
   public void testPrimitiveSubtags() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertDoesntContain(myFixture.getLookupElementStrings(), "geomBoundsInvalid");
   }
 
   public void testDefaultPropertyWrappedField() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertContainsElements(myFixture.getLookupElementStrings(), "image", "Image");
   }
 
   public void testInfinity() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertContainsElements(myFixture.getLookupElementStrings(), "Infinity", "-Infinity", "NaN", "-NaN");
   }
 
   public void testNoInfinity() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertDoesntContain(myFixture.getLookupElementStrings(), "Infinity");
   }
 
   public void testBooleanValues() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertContainsElements(myFixture.getLookupElementStrings(), "true", "false");
   }
 
   public void testBooleanValuesNonStatic() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertContainsElements(myFixture.getLookupElementStrings(), "true", "false");
   }
 
   public void testPropertyNameWithoutField() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertContainsElements(myFixture.getLookupElementStrings(), "disable");
   }
 
   public void testPropertyTagSubclass() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     assertContainsElements(myFixture.getLookupElementStrings(), "Color", "ImagePattern", "LinearGradient", "RadialGradient");
     assertDoesntContain(myFixture.getLookupElementStrings(), "Paint");
   }
 
+  public void testNullFxId() throws Exception {
+    configureAndComplete();
+    assertDoesntContain(myFixture.getLookupElementStrings(), "null");
+  }
+
   public void testSubclassesAndDefaultProperty() throws Exception {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
+    configureAndComplete();
     final List<String> lookupElementStrings = myFixture.getLookupElementStrings();
     assertNotNull(lookupElementStrings);
     final String buttonVariant = "Button";
@@ -221,6 +221,21 @@ public class JavaFxCompletionTest extends LightFixtureCompletionTestCase {
     doTest("ColumnConstraints");
   }
 
+  public void testEventHandlerMethod() throws Exception {
+    configureAndComplete(getTestName(false) + ".java", getTestName(false) + "Super.java");
+    assertSameElements(myFixture.getLookupElementStrings(), "onMyKeyTyped", "onSuperKeyTyped");
+  }
+
+  public void testEventHandlerMethodTypeParam() throws Exception {
+    configureAndComplete(getTestName(false) + ".java", getTestName(false) + "Super.java");
+    assertSameElements(myFixture.getLookupElementStrings(), "onMyKeyTyped", "onSuperKeyTyped");
+  }
+
+  public void testRawCollectionItem() throws Exception {
+    configureAndComplete();
+    assertDoesntContain(myFixture.getLookupElementStrings(), "T", "Object", "java.lang.Object");
+  }
+
   public void testFxIdExactOptionsLabel() throws Exception {
     configureAndComplete("FxIdExactOptionsController.java", "FxIdExactOptionsModel.java");
     assertSameElements(myFixture.getLookupElementStrings(), "parentPrivateLabel", "parentPublicLabel", "privateLabel", "publicLabel", "parentControl", "control", "grandLabel");
@@ -251,25 +266,34 @@ public class JavaFxCompletionTest extends LightFixtureCompletionTestCase {
     assertSameElements(myFixture.getLookupElementStrings(),"pane", "node", "box", "model", "text", "target");
   }
 
-  public void testVariableCompletionBooleanFirst() throws Exception {
-    doOrderTest("zAssignable", "dConvertible", "tConvertible", "controller", "mUnknown");
+  public void testInheritedConstant() throws Exception {
+    configureAndComplete("InheritedConstantData.java", "InheritedConstantSuperData.java");
+    assertSameElements(myFixture.getLookupElementStrings(), "MY_TEXT", "SUPER_TEXT");
   }
 
-  public void testVariableCompletionTooltipFirst() throws Exception {
-    doOrderTest("tAssignable", "controller", "mUnknown", "dIncompatible");
+  public void testMultipleStylesheetsAttribute() throws Exception {
+    myFixture.addFileToProject("mystyle.css", ".myStyle {}");
+    myFixture.addFileToProject("very/deeply/located/small.css", ".small {}");
+    doTest();
   }
 
-  private void doOrderTest(String... expected) {
-    myFixture.configureByFiles(getTestName(true) + ".fxml");
-    complete();
-    assertOrderedEquals(myFixture.getLookupElementStrings(), expected);
+  public void testMultipleStylesheetsTag() throws Exception {
+    myFixture.addFileToProject("mystyle.css", ".myStyle {}");
+    myFixture.addFileToProject("very/deeply/located/small.css", ".small {}");
+    doTest();
   }
 
   private void configureAndComplete(final String... extraFiles) {
-    final List<String> files = new ArrayList<>();
-    files.add(getTestName(true) + ".fxml");
-    Collections.addAll(files, extraFiles);
-    myFixture.configureByFiles(ArrayUtil.toStringArray(files));
+    final String fxmlFileName = getTestName(true) + ".fxml";
+    if (extraFiles.length != 0) {
+      final List<String> files = new ArrayList<>();
+      files.add(fxmlFileName);
+      Collections.addAll(files, extraFiles);
+      myFixture.configureByFiles(ArrayUtil.toStringArray(files));
+    }
+    else {
+      myFixture.configureByFiles(fxmlFileName);
+    }
     complete();
   }
 

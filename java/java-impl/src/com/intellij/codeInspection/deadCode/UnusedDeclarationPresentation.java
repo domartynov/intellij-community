@@ -29,7 +29,6 @@ import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.util.Comparing;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.TextRange;
 import com.intellij.openapi.vcs.FileStatus;
@@ -42,10 +41,10 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.PsiModifierListOwner;
 import com.intellij.psi.util.PsiTreeUtil;
-import com.intellij.psi.util.PsiUtilCore;
 import com.intellij.refactoring.safeDelete.SafeDeleteHandler;
 import com.intellij.ui.HyperlinkAdapter;
 import com.intellij.ui.ScrollPaneFactory;
+import com.intellij.util.ArrayUtil;
 import com.intellij.util.IncorrectOperationException;
 import com.intellij.util.containers.HashMap;
 import com.intellij.util.containers.HashSet;
@@ -71,11 +70,10 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.net.URL;
 import java.util.*;
+import java.util.function.Predicate;
 
 public class UnusedDeclarationPresentation extends DefaultInspectionToolPresentation {
   private final Map<String, Set<RefEntity>> myPackageContents = Collections.synchronizedMap(new HashMap<String, Set<RefEntity>>());
-
-  private Map<String, Set<RefEntity>> myOldPackageContents = null;
 
   private final Set<RefEntity> myIgnoreElements = new HashSet<RefEntity>();
   private WeakUnreferencedFilter myFilter;
@@ -128,11 +126,12 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
   @Override
   public void exportResults(@NotNull final Element parentNode,
                             @NotNull RefEntity refEntity,
-                            Set<CommonProblemDescriptor> excludedDescriptions) {
+                            @NotNull Predicate<CommonProblemDescriptor> excludedDescriptions) {
     if (!(refEntity instanceof RefJavaElement)) return;
     final RefFilter filter = getFilter();
     if (!getIgnoredRefElements().contains(refEntity) && filter.accepts((RefJavaElement)refEntity)) {
       refEntity = getRefManager().getRefinedElement(refEntity);
+      if (!refEntity.isValid()) return;
       Element element = refEntity.getRefManager().export(refEntity, parentNode, -1);
       if (element == null) return;
       @NonNls Element problemClassElement = new Element(InspectionsBundle.message("inspection.export.results.problem.element.tag"));
@@ -186,26 +185,17 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
     @Override
     protected boolean applyFix(@NotNull final RefEntity[] refElements) {
       if (!super.applyFix(refElements)) return false;
-      final ArrayList<PsiElement> psiElements = new ArrayList<PsiElement>();
-      for (RefEntity refElement : refElements) {
-        PsiElement psiElement = refElement instanceof RefElement ? ((RefElement)refElement).getElement() : null;
-        if (psiElement == null) continue;
-        if (getFilter().getElementProblemCount((RefJavaElement)refElement) == 0) continue;
-        psiElements.add(psiElement);
-      }
-
-      ApplicationManager.getApplication().invokeLater(new Runnable() {
-        @Override
-        public void run() {
-          final Project project = getContext().getProject();
-          if (isDisposed() || project.isDisposed()) return;
-          SafeDeleteHandler.invoke(project, PsiUtilCore.toPsiElementArray(psiElements), false, new Runnable() {
-            @Override
-            public void run() {
-              removeElements(refElements, project, myToolWrapper);
-            }
-          });
-        }
+      final PsiElement[] psiElements = Arrays
+        .stream(refElements)
+        .filter(RefElement.class::isInstance)
+        .map(e -> ((RefElement) e).getElement())
+        .filter(e -> e != null)
+        .toArray(PsiElement[]::new);
+      ApplicationManager.getApplication().invokeLater(() -> {
+        final Project project = getContext().getProject();
+        if (isDisposed() || project.isDisposed()) return;
+        SafeDeleteHandler.invoke(project, psiElements, false,
+                                 () -> removeElements(refElements, project, myToolWrapper));
       });
 
       return false; //refresh after safe delete dialog is closed
@@ -248,7 +238,12 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
         PsiElement psiElement = refElement instanceof RefElement ? ((RefElement)refElement).getElement() : null;
         if (psiElement == null) continue;
         if (getFilter().getElementProblemCount((RefJavaElement)refElement) == 0) continue;
-        commentOutDead(psiElement);
+
+        final RefEntity owner = refElement.getOwner();
+        if (!(owner instanceof RefElement && ArrayUtil.find(refElements, owner) > -1)) {
+          commentOutDead(psiElement);
+        }
+
         refElement.getRefManager().removeRefElement((RefElement)refElement, deletedRefs);
       }
 
@@ -344,12 +339,13 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
                                        @NotNull InspectionNode node,
                                        @NotNull InspectionRVContentProvider provider,
                                        @NotNull InspectionTreeNode parentNode,
-                                       boolean showStructure) {
+                                       boolean showStructure,
+                                       boolean groupByStructure) {
     final EntryPointsNode entryPointsNode = new EntryPointsNode(context);
     InspectionToolWrapper dummyToolWrapper = entryPointsNode.getToolWrapper();
     InspectionToolPresentation presentation = context.getPresentation(dummyToolWrapper);
     presentation.updateContent();
-    provider.appendToolNodeContent(context, entryPointsNode, node, showStructure);
+    provider.appendToolNodeContent(context, entryPointsNode, node, showStructure, groupByStructure);
     return entryPointsNode;
   }
 
@@ -376,38 +372,13 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
 
   @Override
   public boolean hasReportedProblems() {
-    final GlobalInspectionContextImpl context = getContext();
-    if (!isDisposed() && context.getUIOptions().SHOW_ONLY_DIFF){
-      return containsOnlyDiff(myPackageContents) ||
-             myOldPackageContents != null && containsOnlyDiff(myOldPackageContents);
-    }
-    if (!myPackageContents.isEmpty()) return true;
-    return isOldProblemsIncluded() && !myOldPackageContents.isEmpty();
-  }
-
-  private boolean containsOnlyDiff(@NotNull Map<String, Set<RefEntity>> packageContents) {
-    for (String packageName : packageContents.keySet()) {
-      final Set<RefEntity> refElements = packageContents.get(packageName);
-      if (refElements != null){
-        for (RefEntity refElement : refElements) {
-          if (getElementStatus(refElement) != FileStatus.NOT_CHANGED){
-            return true;
-          }
-        }
-      }
-    }
-    return false;
+    return !myPackageContents.isEmpty();
   }
 
   @NotNull
   @Override
   public Map<String, Set<RefEntity>> getContent() {
     return myPackageContents;
-  }
-
-  @Override
-  public Map<String, Set<RefEntity>> getOldContent() {
-    return myOldPackageContents;
   }
 
   @Override
@@ -424,7 +395,6 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
   @Override
   public void cleanup() {
     super.cleanup();
-    myOldPackageContents = null;
     myPackageContents.clear();
     myIgnoreElements.clear();
   }
@@ -433,7 +403,6 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
   @Override
   public void finalCleanup() {
     super.finalCleanup();
-    myOldPackageContents = null;
   }
 
   @Override
@@ -443,42 +412,20 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
 
   @Override
   public boolean isElementIgnored(final RefEntity element) {
-    for (RefEntity entity : myIgnoreElements) {
-      if (Comparing.equal(entity, element)) {
-        return true;
-      }
-    }
-    return false;
+    return myIgnoreElements.contains(element);
   }
 
 
   @NotNull
   @Override
   public FileStatus getElementStatus(final RefEntity element) {
-    final GlobalInspectionContextImpl context = getContext();
-    if (!isDisposed() && context.getUIOptions().SHOW_DIFF_WITH_PREVIOUS_RUN){
-      if (myOldPackageContents != null){
-        final boolean old = RefUtil.contains(element, collectRefElements(myOldPackageContents));
-        final boolean current = RefUtil.contains(element, collectRefElements(myPackageContents));
-        return calcStatus(old, current);
-      }
-      return FileStatus.ADDED;
-    }
     return FileStatus.NOT_CHANGED;
   }
 
   @Override
   @NotNull
-  public Collection<RefEntity> getIgnoredRefElements() {
+  public Set<RefEntity> getIgnoredRefElements() {
     return myIgnoreElements;
-  }
-
-  private static Set<RefEntity> collectRefElements(Map<String, Set<RefEntity>> packageContents) {
-    Set<RefEntity> allAvailable = new HashSet<RefEntity>();
-    for (Set<RefEntity> elements : packageContents.values()) {
-      allAvailable.addAll(elements);
-    }
-    return allAvailable;
   }
 
   @Override
@@ -523,13 +470,8 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
     @Override
     public void invoke(@NotNull Project project, Editor editor, PsiFile file) throws IncorrectOperationException {
       if (myElement != null && myElement.isValid()) {
-        ApplicationManager.getApplication().invokeLater(new Runnable() {
-          @Override
-          public void run() {
-            SafeDeleteHandler
-              .invoke(myElement.getProject(), new PsiElement[]{PsiTreeUtil.getParentOfType(myElement, PsiModifierListOwner.class)}, false);
-          }
-        });
+        ApplicationManager.getApplication().invokeLater(() -> SafeDeleteHandler
+          .invoke(myElement.getProject(), new PsiElement[]{PsiTreeUtil.getParentOfType(myElement, PsiModifierListOwner.class)}, false));
       }
     }
 
@@ -565,6 +507,7 @@ public class UnusedDeclarationPresentation extends DefaultInspectionToolPresenta
     htmlView.setContentType(UIUtil.HTML_MIME);
     htmlView.setEditable(false);
     htmlView.setOpaque(false);
+    htmlView.setBackground(UIUtil.getLabelBackground());
     htmlView.addHyperlinkListener(new HyperlinkAdapter() {
       @Override
       protected void hyperlinkActivated(HyperlinkEvent e) {

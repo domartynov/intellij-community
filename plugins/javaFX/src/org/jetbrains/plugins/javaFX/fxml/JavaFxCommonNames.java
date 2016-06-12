@@ -43,6 +43,7 @@ public class JavaFxCommonNames {
   @NonNls public static final String JAVAFX_FXML_BUILDER = "javafx.util.Builder";
   @NonNls public static final String JAVAFX_BEANS_OBSERVABLE = "javafx.beans.Observable";
   @NonNls public static final String VALUE_OF = "valueOf";
+  @NonNls public static final String GET_VALUE = "getValue";
   @NonNls public static final String VALUE = "value";
   @NonNls public static final String JAVAFX_FXML_FXMLLOADER = "javafx.fxml.FXMLLoader";
   @NonNls public static final String JAVAFX_BEANS_VALUE_OBSERVABLE_VALUE = "javafx.beans.value.ObservableValue";
@@ -50,7 +51,7 @@ public class JavaFxCommonNames {
   @NonNls public static final String JAVAFX_SCENE_LAYOUT_PANE = "javafx.scene.layout.Pane";
   @NonNls public static final String JAVAFX_BEANS_NAMED_ARG = "javafx.beans.NamedArg";
 
-  @NonNls public static final String PROPERTY_FIELD_SUFFIX = "Property";
+  @NonNls public static final String PROPERTY_METHOD_SUFFIX = "Property";
 
   public static final Map<String, PsiType> ourWritableMap = new HashMap<String, PsiType>();
   static {

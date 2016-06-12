@@ -20,6 +20,7 @@ import com.intellij.openapi.components.ServiceManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.*;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vcs.FilePath;
 import com.intellij.openapi.vcs.FileStatus;
@@ -113,7 +114,7 @@ public class GitHistoryUtils {
   public static VcsRevisionDescription getCurrentRevisionDescription(final Project project, FilePath filePath, @Nullable String branch) throws VcsException {
     filePath = getLastCommitName(project, filePath);
     GitSimpleHandler h = new GitSimpleHandler(project, GitUtil.getGitRoot(filePath), GitCommand.LOG);
-    GitLogParser parser = new GitLogParser(project, HASH, COMMIT_TIME, AUTHOR_NAME, COMMITTER_NAME, SUBJECT, BODY, RAW_BODY, ENCODING);
+    GitLogParser parser = new GitLogParser(project, HASH, COMMIT_TIME, AUTHOR_NAME, COMMITTER_NAME, SUBJECT, BODY, RAW_BODY);
     h.setSilent(true);
     h.addParameters("-n1", parser.getPretty());
     if (branch != null && !branch.isEmpty()) {
@@ -239,7 +240,7 @@ public class GitHistoryUtils {
     }
     final GitLogParser logParser = new GitLogParser(project, GitLogParser.NameStatus.STATUS,
                                                     HASH, COMMIT_TIME, AUTHOR_NAME, AUTHOR_EMAIL, COMMITTER_NAME, COMMITTER_EMAIL, PARENTS,
-                                                    SUBJECT, BODY, RAW_BODY, AUTHOR_TIME, ENCODING);
+                                                    SUBJECT, BODY, RAW_BODY, AUTHOR_TIME);
 
     final AtomicReference<String> firstCommit = new AtomicReference<String>(startingRevision.asString());
     final AtomicReference<String> firstCommitParent = new AtomicReference<String>(firstCommit.get());
@@ -260,7 +261,7 @@ public class GitHistoryUtils {
         final GitRevisionNumber revision = new GitRevisionNumber(record.getHash(), record.getDate());
         firstCommit.set(record.getHash());
         final String[] parentHashes = record.getParentsHashes();
-        if (parentHashes == null || parentHashes.length < 1) {
+        if (parentHashes.length < 1) {
           firstCommitParent.set(null);
         }
         else {
@@ -279,10 +280,9 @@ public class GitHistoryUtils {
             revisionPath = currentPath.get();
           }
 
-          final Couple<String> authorPair = Couple.of(record.getAuthorName(), record.getAuthorEmail());
-          final Couple<String> committerPair =
-            record.getCommitterName() == null ? null : Couple.of(record.getCommitterName(), record.getCommitterEmail());
-          Collection<String> parents = parentHashes == null ? Collections.<String>emptyList() : Arrays.asList(parentHashes);
+          Couple<String> authorPair = Couple.of(record.getAuthorName(), record.getAuthorEmail());
+          Couple<String> committerPair = Couple.of(record.getCommitterName(), record.getCommitterEmail());
+          Collection<String> parents = Arrays.asList(parentHashes);
           consumer.consume(new GitFileRevision(project, finalRoot, revisionPath, revision, Couple.of(authorPair, committerPair), message, null,
                                                new Date(record.getAuthorTimeStamp()), parents));
           List<GitLogStatusInfo> statusInfos = record.getStatusInfos();
@@ -380,7 +380,7 @@ public class GitHistoryUtils {
     final GitLineHandler h = new GitLineHandler(project, root, GitCommand.LOG);
     h.setStdoutSuppressed(true);
     h.addParameters("--name-status", parser.getPretty(), "--encoding=UTF-8", lastCommit);
-    if (GitVersionSpecialty.FULL_HISTORY_SIMPLIFY_MERGES_WORKS_CORRECTLY.existsIn(version)) {
+    if (GitVersionSpecialty.FULL_HISTORY_SIMPLIFY_MERGES_WORKS_CORRECTLY.existsIn(version) && Registry.is("git.file.history.full")) {
       h.addParameters("--full-history", "--simplify-merges");
     }
     if (parameters != null && parameters.length > 0) {
@@ -441,7 +441,7 @@ public class GitHistoryUtils {
 
     GitSimpleHandler h = new GitSimpleHandler(project, root, GitCommand.LOG);
     GitLogParser parser = new GitLogParser(project, GitLogParser.NameStatus.NONE, HASH, PARENTS, AUTHOR_NAME,
-                                           AUTHOR_EMAIL, COMMIT_TIME, SUBJECT, COMMITTER_NAME, COMMITTER_EMAIL, AUTHOR_TIME, ENCODING);
+                                           AUTHOR_EMAIL, COMMIT_TIME, SUBJECT, COMMITTER_NAME, COMMITTER_EMAIL, AUTHOR_TIME);
     h.setSilent(true);
     // git show can show either -p, or --name-status, or --name-only, but we need nothing, just details => using git log --no-walk
     h.addParameters("--no-walk");
@@ -478,7 +478,7 @@ public class GitHistoryUtils {
 
     GitSimpleHandler h = new GitSimpleHandler(project, root, GitCommand.LOG);
     GitLogParser parser = new GitLogParser(project, GitLogParser.NameStatus.NONE, HASH, PARENTS, COMMIT_TIME, SUBJECT, AUTHOR_NAME,
-                                           AUTHOR_EMAIL, RAW_BODY, COMMITTER_NAME, COMMITTER_EMAIL, AUTHOR_TIME, ENCODING);
+                                           AUTHOR_EMAIL, RAW_BODY, COMMITTER_NAME, COMMITTER_EMAIL, AUTHOR_TIME);
 
     h.setSilent(true);
     // git show can show either -p, or --name-status, or --name-only, but we need nothing, just details => using git log --no-walk
@@ -516,7 +516,7 @@ public class GitHistoryUtils {
     final int COMMIT_BUFFER = 1000;
     GitLineHandler h = new GitLineHandler(project, root, GitCommand.LOG);
     final GitLogParser parser = new GitLogParser(project, GitLogParser.NameStatus.NONE, HASH, PARENTS, COMMIT_TIME,
-                                                 AUTHOR_NAME, AUTHOR_EMAIL, REF_NAMES, ENCODING);
+                                                 AUTHOR_NAME, AUTHOR_EMAIL, REF_NAMES);
     h.setStdoutSuppressed(true);
     h.addParameters(parser.getPretty(), "--encoding=UTF-8");
     h.addParameters("--decorate=full");
@@ -826,7 +826,7 @@ public class GitHistoryUtils {
     GitSimpleHandler h = new GitSimpleHandler(project, root, GitCommand.LOG);
     GitLogParser.NameStatus status = withChanges ? GitLogParser.NameStatus.STATUS : GitLogParser.NameStatus.NONE;
     GitLogParser.GitLogOption[] options = { HASH, COMMIT_TIME, AUTHOR_NAME, AUTHOR_TIME, AUTHOR_EMAIL, COMMITTER_NAME, COMMITTER_EMAIL,
-      PARENTS, SUBJECT, BODY, RAW_BODY, ENCODING };
+      PARENTS, SUBJECT, BODY, RAW_BODY };
     if (withRefs) {
       options = ArrayUtil.append(options, REF_NAMES);
     }
@@ -927,7 +927,7 @@ public class GitHistoryUtils {
     GitSimpleHandler h = new GitSimpleHandler(project, root, GitCommand.SHOW);
     GitLogParser parser = new GitLogParser(project, GitLogParser.NameStatus.STATUS,
                                            HASH, HASH, COMMIT_TIME, AUTHOR_NAME, AUTHOR_TIME, AUTHOR_EMAIL, COMMITTER_NAME,
-                                           COMMITTER_EMAIL, PARENTS, REF_NAMES, SUBJECT, BODY, RAW_BODY, ENCODING);
+                                           COMMITTER_EMAIL, PARENTS, REF_NAMES, SUBJECT, BODY, RAW_BODY);
     h.setSilent(true);
     h.addParameters("--name-status", "-M", parser.getPretty(), "--encoding=UTF-8");
     h.addParameters(new ArrayList<String>(commitsIds));

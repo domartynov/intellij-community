@@ -15,8 +15,6 @@
  */
 package org.jetbrains.idea.maven.dom.refactorings.introduce;
 
-import com.intellij.openapi.application.AcceptNestedTransactions;
-import com.intellij.openapi.application.TransactionKind;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.util.Pair;
@@ -50,7 +48,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
-@AcceptNestedTransactions(TransactionKind.Common.TEXT_EDITING)
 public class IntroducePropertyDialog extends DialogWrapper {
 
   private final Project myProject;
@@ -204,18 +201,16 @@ public class IntroducePropertyDialog extends DialogWrapper {
     List<MavenDomProjectModel> projects = getProjects();
 
     ComboBoxUtil
-      .setModel(myMavenProjectsComboBox, new DefaultComboBoxModel(), projects, new Function<MavenDomProjectModel, Pair<String, ?>>() {
-        public Pair<String, ?> fun(MavenDomProjectModel model) {
-          String projectName = model.getName().getStringValue();
-          MavenProject mavenProject = MavenDomUtil.findProject(model);
-          if (mavenProject != null) {
-            projectName = mavenProject.getDisplayName();
-          }
-          if (StringUtil.isEmptyOrSpaces(projectName)) {
-            projectName = "pom.xml";
-          }
-          return Pair.create(projectName, model);
+      .setModel(myMavenProjectsComboBox, new DefaultComboBoxModel(), projects, model -> {
+        String projectName = model.getName().getStringValue();
+        MavenProject mavenProject = MavenDomUtil.findProject(model);
+        if (mavenProject != null) {
+          projectName = mavenProject.getDisplayName();
         }
+        if (StringUtil.isEmptyOrSpaces(projectName)) {
+          projectName = "pom.xml";
+        }
+        return Pair.create(projectName, model);
       });
 
     myMavenProjectsComboBox.setSelectedItem(myMavenDomProjectModel);

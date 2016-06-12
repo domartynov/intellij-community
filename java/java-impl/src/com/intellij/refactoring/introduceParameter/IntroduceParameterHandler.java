@@ -50,7 +50,6 @@ import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.Pass;
 import com.intellij.openapi.util.Ref;
 import com.intellij.openapi.util.TextRange;
-import com.intellij.openapi.wm.IdeFocusManager;
 import com.intellij.psi.*;
 import com.intellij.psi.codeStyle.JavaCodeStyleManager;
 import com.intellij.psi.codeStyle.SuggestedNameInfo;
@@ -209,12 +208,8 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
       return true;
     }
 
-    chooseMethodToIntroduceParameter(editor, validEnclosingMethods, new PairConsumer<PsiMethod, PsiMethod>() {
-      @Override
-      public void consume(PsiMethod methodToSearchIn, PsiMethod methodToSearchFor) {
-        introducer.introduceParameter(methodToSearchIn, methodToSearchFor);
-      }
-    });
+    chooseMethodToIntroduceParameter(editor, validEnclosingMethods,
+                                     (methodToSearchIn, methodToSearchFor) -> introducer.introduceParameter(methodToSearchIn, methodToSearchFor));
 
     return true;
   }
@@ -267,12 +262,7 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
 
           final PsiMethod methodToSearchFor = superMethod.isEnabled() && superMethod.isSelected()
                                               ? methodToSearchIn.findDeepestSuperMethod() : methodToSearchIn;
-          Runnable runnable = new Runnable() {
-            public void run() {
-              consumer.consume(methodToSearchIn, methodToSearchFor);
-            }
-          };
-          IdeFocusManager.findInstance().doWhenFocusSettlesDown(runnable);
+          consumer.consume(methodToSearchIn, methodToSearchFor);
         }
       }, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0)));
     myEnclosingMethodsPopup = JBPopupFactory.getInstance().createComponentPopupBuilder(panel, list)
@@ -494,12 +484,9 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
         dialog.setReplaceAllOccurrences(replaceAllOccurrences);
         dialog.setGenerateDelegate(delegate);
         if (dialog.showAndGet()) {
-          final Runnable cleanSelectionRunnable = new Runnable() {
-            @Override
-            public void run() {
-              if (myEditor != null && !myEditor.isDisposed()) {
-                myEditor.getSelectionModel().removeSelection();
-              }
+          final Runnable cleanSelectionRunnable = () -> {
+            if (myEditor != null && !myEditor.isDisposed()) {
+              myEditor.getSelectionModel().removeSelection();
             }
           };
           SwingUtilities.invokeLater(cleanSelectionRunnable);
@@ -593,7 +580,7 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
           final PsiType returnType = emptyMethod.getReturnType();
           LOG.assertTrue(returnType != null);
           final String title = "Choose Applicable Functional Interface: " + methodSignature + " -> " + returnType.getPresentableText();
-          NavigationUtil.getPsiElementPopup(psiClasses, new PsiClassListCellRenderer(), title,
+          NavigationUtil.getPsiElementPopup(psiClasses, PsiClassListCellRenderer.INSTANCE, title,
                                             new PsiElementProcessor<PsiClass>() {
                                               @Override
                                               public boolean execute(@NotNull PsiClass psiClass) {
@@ -619,12 +606,8 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
                                            final Editor editor,
                                            final MyExtractMethodProcessor processor, 
                                            final PsiElement[] elements) {
-    final PairConsumer<PsiMethod, PsiMethod> consumer = new PairConsumer<PsiMethod, PsiMethod>() {
-      @Override
-      public void consume(PsiMethod methodToIntroduceParameter, PsiMethod methodToSearchFor) {
-        introduceWrappedCodeBlockParameter(methodToIntroduceParameter, methodToSearchFor, editor, project, selectedType, processor, elements);
-      }
-    };
+    final PairConsumer<PsiMethod, PsiMethod> consumer =
+      (methodToIntroduceParameter, methodToSearchFor) -> introduceWrappedCodeBlockParameter(methodToIntroduceParameter, methodToSearchFor, editor, project, selectedType, processor, elements);
     chooseMethodToIntroduceParameter(editor, enclosingMethods, consumer);
   }
 
@@ -656,37 +639,34 @@ public class IntroduceParameterHandler extends IntroduceHandlerBase {
     final Ref<String> suffixText = new Ref<String>();
     final Ref<String> prefixText = new Ref<String>();
     final Ref<String> methodText = new Ref<String>();
-    WriteCommandAction.runWriteCommandAction(project, new Runnable() {
-      @Override
-      public void run() {
-        final PsiMethod method = LambdaUtil.getFunctionalInterfaceMethod(wrapperClass);
-        LOG.assertTrue(method != null);
-        final String interfaceMethodName = method.getName();
-        processor.setMethodName(interfaceMethodName);
+    WriteCommandAction.runWriteCommandAction(project, () -> {
+      final PsiMethod method = LambdaUtil.getFunctionalInterfaceMethod(wrapperClass);
+      LOG.assertTrue(method != null);
+      final String interfaceMethodName = method.getName();
+      processor.setMethodName(interfaceMethodName);
 
-        if (copyElements.length == 1 && copyElements[0].getUserData(ElementToWorkOn.PARENT) == null) {
-          copyElements[0].putUserData(ElementToWorkOn.REPLACE_NON_PHYSICAL, true);
-        }
-
-        processor.doExtract();
-
-        final PsiMethod extractedMethod = processor.getExtractedMethod();
-        final PsiParameter[] parameters = extractedMethod.getParameterList().getParameters();
-        final PsiParameter[] interfaceParameters = method.getParameterList().getParameters();
-        final PsiSubstitutor substitutor = resolveResult.getSubstitutor();
-        for (int i = 0; i < interfaceParameters.length; i++) {
-          final PsiTypeElement typeAfterInterface = factory.createTypeElement(substitutor.substitute(interfaceParameters[i].getType()));
-          final PsiTypeElement typeElement = parameters[i].getTypeElement();
-          if (typeElement != null) {
-            typeElement.replace(typeAfterInterface);
-          }
-        }
-        methodText.set(extractedMethod.getText());
-
-        final PsiMethodCallExpression methodCall = processor.getMethodCall();
-        prefixText.set(containerCopy.getText().substring(0, methodCall.getTextRange().getStartOffset() - containerCopy.getTextRange().getStartOffset()));
-        suffixText.set("." + methodCall.getText() + containerCopy.getText().substring(methodCall.getTextRange().getEndOffset() - containerCopy.getTextRange().getStartOffset()));
+      if (copyElements.length == 1 && copyElements[0].getUserData(ElementToWorkOn.PARENT) == null) {
+        copyElements[0].putUserData(ElementToWorkOn.REPLACE_NON_PHYSICAL, true);
       }
+
+      processor.doExtract();
+
+      final PsiMethod extractedMethod = processor.getExtractedMethod();
+      final PsiParameter[] parameters = extractedMethod.getParameterList().getParameters();
+      final PsiParameter[] interfaceParameters = method.getParameterList().getParameters();
+      final PsiSubstitutor substitutor = resolveResult.getSubstitutor();
+      for (int i = 0; i < interfaceParameters.length; i++) {
+        final PsiTypeElement typeAfterInterface = factory.createTypeElement(substitutor.substitute(interfaceParameters[i].getType()));
+        final PsiTypeElement typeElement = parameters[i].getTypeElement();
+        if (typeElement != null) {
+          typeElement.replace(typeAfterInterface);
+        }
+      }
+      methodText.set(extractedMethod.getText());
+
+      final PsiMethodCallExpression methodCall = processor.getMethodCall();
+      prefixText.set(containerCopy.getText().substring(0, methodCall.getTextRange().getStartOffset() - containerCopy.getTextRange().getStartOffset()));
+      suffixText.set("." + methodCall.getText() + containerCopy.getText().substring(methodCall.getTextRange().getEndOffset() - containerCopy.getTextRange().getStartOffset()));
     });
 
 
